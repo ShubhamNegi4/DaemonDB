@@ -13,11 +13,17 @@ Tree
 - all leaf nodes at same depth
 
 */
-
 package main
 import (
 	"sync"
 )
+type NodeType int
+
+const (
+	NodeInternal NodeType = iota
+	NodeLeaf
+)
+
 
 const (
 	PageSize = 4096 // in bytes (4KB)
@@ -30,14 +36,14 @@ const (
 
 type Node struct {
 	id int64
-	nodeType iota // 0: internal node, 1: leaf node
+	nodeType NodeType // 0: internal node, 1: leaf node
 	key [][] byte // keys in the node (sorted keys)
 	children [] int64 // only for internal node
 	vals [][] byte // leaf nodes
 	next int64 // only for leaf node
 	parent int64
 
-	numsKeys int16 
+	numKeys int16 
 	isDirty bool // to check if the node is modified
 	pincnt int16 // buffer pool pin count
 	mu sync.RWMutex // to handle concurrent access
@@ -58,7 +64,7 @@ type Pager interface {
 	WritePage(pageID int64, data []byte) error
 	AllocatePage() (int64, error)
 	DeallocatePage(pageID int64) error
-	sync() error
+	Sync() error
 	Close() error
 }
 
