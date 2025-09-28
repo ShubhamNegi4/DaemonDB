@@ -36,7 +36,7 @@ const (
 
 type Node struct {
 	id int64
-	nodeType NodeType // 0: internal node, 1: leaf node
+	nodeType NodeType
 	key [][] byte // keys in the node (sorted keys)
 	children [] int64 // only for internal node
 	vals [][] byte // leaf nodes
