@@ -1,4 +1,4 @@
-Building something that make a dent in the world
+Building something that makes a dent in the world
 (Ongoing)
 
 
