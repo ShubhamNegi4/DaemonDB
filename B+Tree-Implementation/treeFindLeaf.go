@@ -6,7 +6,7 @@ func (t* BPlusTree) FindLeaf(nodeId int64, key[] byte) *Node {
 		return n
 	}
 	i:= 0
-	for i< len(n.key) && t.cmp(key, n.key[i]) < 0 {
+	for i< len(n.key) && t.cmp(n.key[i], key) <= 0 {
 		i++
 	}
 	childId := n.children[i]

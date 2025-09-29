@@ -10,7 +10,8 @@ func (t *BPlusTree)Insertion(key []byte, value[]byte) {
 		root.key = append(root.key, key)
 		root.vals = append(root.vals, value)
 		root.numKeys = 1
-		root.id = 1
+		newID := int64(len(t.cache.pages) + 1)
+        root.id = newID
 		t.root = root.id
 		t.cache.pages[root.id] = root
 		return
@@ -27,7 +28,8 @@ func (t *BPlusTree)Insertion(key []byte, value[]byte) {
 
 	leaf.key = append(leaf.key[:i], append([][]byte{key},leaf.key[i:]...)...)
 	leaf.vals= append(leaf.vals[:i], append([][]byte{value},leaf.vals[i:]...)...)
-	leaf.numKeys++
+	leaf.numKeys = int16(len(leaf.key))
+	t.cache.pages[leaf.id] = leaf 
 
 	if leaf.numKeys> MaxKeys {
 		t.SplitLeaf(leaf)
