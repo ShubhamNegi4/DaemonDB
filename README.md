@@ -53,4 +53,5 @@ DaemonDB/
 - **Max Keys/Node**: 32
 - **Page Size**: 4KB
 
-
+Necessary Image: 
+![Alt text for the image](./Sample_Image/Necessary_Image.jpeg)
