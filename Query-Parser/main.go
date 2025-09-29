@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	lex "query-parser/lexer"
 	"strings"
+
+	lex "query-parser/lexer"
+	"query-parser/parser"
 )
 
 func main() {
@@ -27,19 +29,42 @@ func main() {
 
 	query := strings.Join(inputLines, " ")
 
-	lexer := lex.New(query)
+	// Lexer + Parser
+	l := lex.New(query)
+	p := parser.New(l)
 
-	tokens := []lex.Token{}
-	for {
-		tok := lexer.NextToken()
-		tokens = append(tokens, tok)
-		if tok.Kind == lex.END {
-			break
+	stmt := p.ParseStatement()
+
+	fmt.Println("=== AST ===")
+	fmt.Printf("%#v\n", stmt)
+
+	fmt.Println("=== Bytecode ===")
+	emitBytecode(stmt)
+}
+
+func emitBytecode(stmt parser.Statement) {
+	switch s := stmt.(type) {
+	case *parser.SelectStmt:
+		fmt.Println("PUSH_COLS", s.Columns)
+		fmt.Println("SCAN", s.Table)
+	case *parser.CreateTableStmt:
+		fmt.Println("CREATE_TABLE", s.TableName)
+		for _, c := range s.Columns {
+			fmt.Println("  ADD_COL", c.Name, c.Type)
 		}
+	case *parser.InsertStmt:
+		fmt.Println("INSERT", s.Table)
+		for _, v := range s.Values {
+			fmt.Println("  PUSH_VAL", v)
+		}
+	case *parser.DropStmt:
+		fmt.Println("DROP_TABLE", s.Table)
+	case *parser.UpdateStmt:
+		fmt.Println("UPDATE", s.Table)
+		for k, v := range s.Assignments {
+			fmt.Println("  SET", k, v)
+		}
+	default:
+		fmt.Println("Unknown statement")
 	}
-
-	for i := range tokens {
-		fmt.Printf("kind: %s     value: %s\n", tokens[i].Kind, tokens[i].Value)
-	}
-
 }
