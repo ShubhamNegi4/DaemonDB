@@ -3,6 +3,7 @@ package main
 func (t* BPlusTree) SplitLeaf(leaf 	*Node) {
 	mid := leaf.numKeys/2
 	newLeaf := NewNode(NodeLeaf)
+    newLeaf.id, _ = t.pager.AllocatePage()
 	newLeaf.key = append(newLeaf.key, leaf.key[mid:]...)
 	newLeaf.vals = append(newLeaf.vals, leaf.vals[mid:]...)
 	newLeaf.numKeys = int16(len(newLeaf.key))
@@ -24,7 +25,7 @@ func (t* BPlusTree) SplitLeaf(leaf 	*Node) {
         newRoot.children = append(newRoot.children, leaf.id, newLeaf.id)
         newRoot.numKeys = 1
 
-        newRoot.id = 999 // placeholder ID
+        newRoot.id,_ = t.pager.AllocatePage()
         t.root = newRoot.id
         t.cache.pages[newRoot.id] = newRoot
     } else {

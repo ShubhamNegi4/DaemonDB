@@ -1,5 +1,6 @@
 package main
 
+
 func (t *BPlusTree) FindLeaf(nodeId int64, key []byte) *Node {
 	if nodeId == 0 || t == nil || t.cache == nil || t.cache.pages == nil {
 		return nil
@@ -11,10 +12,7 @@ func (t *BPlusTree) FindLeaf(nodeId int64, key []byte) *Node {
 	if n.nodeType == NodeLeaf {
 		return n
 	}
-	i := 0
-	for i < len(n.key) && t.cmp(n.key[i], key) <= 0 {
-		i++
-	}
+	i := lowerBound(n.key, key, t.cmp)
 	// safe child index: internal nodes must have len(children) == len(keys)+1
 	if i < 0 {
 		i = 0
