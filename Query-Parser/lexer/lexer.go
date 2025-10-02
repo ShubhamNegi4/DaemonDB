@@ -65,7 +65,6 @@ func (l *Lexer) NextToken() Token {
 		if isLetter(l.ch) {
 			str := l.keyIdentLookup() // str could be a keyword or an identifier
 			return Token{Kind: KeyIdentKind(str), Value: str}
-
 		} else if isNumber(l.ch) {
 			return Token{Kind: INT, Value: l.readNumber()}
 		} else {
@@ -117,11 +116,12 @@ func (l *Lexer) readNumber() string {
 func (l *Lexer) readString() string {
 	l.readChar() // read start " of string
 	start := l.pos
-	for isLetter(l.ch) {
+	for l.ch != '"' && l.ch != 0 { // read everything until closing "
 		l.readChar()
 	}
+	str := l.input[start:l.pos]
 	l.readChar() // read end " of string
-	return l.input[start : l.pos-1]
+	return str
 }
 
 func KeyIdentKind(str string) TokenKind {

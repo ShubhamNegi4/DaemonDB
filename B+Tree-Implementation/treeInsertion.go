@@ -1,9 +1,4 @@
-package main
-
-
-
-
-
+package bplus
 
 func (t *BPlusTree) Insertion(key []byte, value []byte) {
 	t.mu.Lock()
@@ -15,7 +10,7 @@ func (t *BPlusTree) Insertion(key []byte, value []byte) {
 		root.key = append(root.key, key)
 		root.vals = append(root.vals, value)
 		root.numKeys = 1
-		newID,_ := t.pager.AllocatePage()
+		newID, _ := t.pager.AllocatePage()
 		root.id = newID
 		t.root = root.id
 		t.cache.pages[root.id] = root
@@ -25,7 +20,7 @@ func (t *BPlusTree) Insertion(key []byte, value []byte) {
 	//find leaf
 	leaf := t.FindLeaf(t.root, key)
 
-	i:= binarySearchInsert(leaf.key, key, t.cmp)
+	i := binarySearchInsert(leaf.key, key, t.cmp)
 
 	leaf.key = append(leaf.key[:i], append([][]byte{key}, leaf.key[i:]...)...)
 	leaf.vals = append(leaf.vals[:i], append([][]byte{value}, leaf.vals[i:]...)...)

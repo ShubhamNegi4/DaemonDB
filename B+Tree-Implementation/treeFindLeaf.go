@@ -1,5 +1,4 @@
-package main
-
+package bplus
 
 func (t *BPlusTree) FindLeaf(nodeId int64, key []byte) *Node {
 	if nodeId == 0 || t == nil || t.cache == nil || t.cache.pages == nil {

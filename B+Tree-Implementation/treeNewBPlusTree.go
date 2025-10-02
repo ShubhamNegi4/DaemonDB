@@ -1,9 +1,10 @@
-package main
-func NewBPlusTree(p Pager, bp *BufferPool, cmp func(a, b[]byte) int) *BPlusTree {
+package bplus
+
+func NewBPlusTree(p Pager, bp *BufferPool, cmp func(a, b []byte) int) *BPlusTree {
 	return &BPlusTree{
-		root:0,
+		root:  0,
 		pager: p,
 		cache: bp,
-		cmp: cmp,
+		cmp:   cmp,
 	}
 }

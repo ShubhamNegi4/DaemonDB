@@ -13,10 +13,12 @@ Tree
 - all leaf nodes at same depth
 
 */
-package main
+package bplus
+
 import (
 	"sync"
 )
+
 type NodeType int
 
 const (
@@ -24,37 +26,36 @@ const (
 	NodeLeaf
 )
 
-
 const (
 	PageSize = 4096 // in bytes (4KB)
-	MaxKeys = 32
-	MinKeys = MaxKeys/2
+	MaxKeys  = 32
+	MinKeys  = MaxKeys / 2
 
-	MaxKeyLen = 256 // in bytes
+	MaxKeyLen = 256  // in bytes
 	MaxValLen = 4096 // in bytes
 )
 
 type Node struct {
-	id int64
+	id       int64
 	nodeType NodeType
-	key [][] byte // keys in the node (sorted keys)
-	children [] int64 // only for internal node
-	vals [][] byte // leaf nodes
-	next int64 // only for leaf node
-	parent int64
+	key      [][]byte // keys in the node (sorted keys)
+	children []int64  // only for internal node
+	vals     [][]byte // leaf nodes
+	next     int64    // only for leaf node
+	parent   int64
 
-	numKeys int16 
-	isDirty bool // to check if the node is modified
-	pincnt int16 // buffer pool pin count
-	mu sync.RWMutex // to handle concurrent access
+	numKeys int16
+	isDirty bool         // to check if the node is modified
+	pincnt  int16        // buffer pool pin count
+	mu      sync.RWMutex // to handle concurrent access
 }
 
 type BPlusTree struct {
-	root int64 // root node id
+	root  int64 // root node id
 	pager Pager
 	cache *BufferPool
-	cmp func(a, b[]byte) int // comparison function for keys
-	mu sync.RWMutex
+	cmp   func(a, b []byte) int // comparison function for keys
+	mu    sync.RWMutex
 }
 
 // Pager is the persistence abstraction. Implement an in-memory pager first

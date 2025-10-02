@@ -1,4 +1,4 @@
-package main
+package bplus
 
 func (t *BPlusTree) Delete(key []byte) {
 	t.deleteRecursive(t.root, key)

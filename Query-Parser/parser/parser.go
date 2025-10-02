@@ -1,8 +1,9 @@
 package parser
 
 import (
+	lex "DaemonDB/Query-Parser/lexer"
 	"fmt"
-	lex "query-parser/lexer"
+	"strings"
 )
 
 type Parser struct {
@@ -47,6 +48,15 @@ func (p *Parser) ParseStatement() Statement {
 	}
 	panic(fmt.Sprintf("unexpected token: %s (%s)", p.curToken.Kind, p.curToken.Value))
 }
+
+/*
+
+
+-------------------parser functions implementation-------------------
+
+
+
+*/
 
 // --- SELECT ---
 func (p *Parser) parseSelect() *SelectStmt {
@@ -119,28 +129,33 @@ func (p *Parser) parseInsert() *InsertStmt {
 	table := p.curToken.Value
 	p.nextToken()
 
-	// VALUES keyword
-	if p.curToken.Value != "values" && p.curToken.Value != "VALUES" {
+	if strings.ToUpper(p.curToken.Value) != "VALUES" {
 		panic("expected VALUES")
 	}
 	p.nextToken()
 
-	p.expect(lex.OPENROUNDED)
+	if p.curToken.Kind != lex.OPENROUNDED {
+		panic("expected (")
+	}
 	p.nextToken()
 
 	values := []string{}
-	for p.curToken.Kind == lex.STRING || p.curToken.Kind == lex.INT {
-		values = append(values, p.curToken.Value)
-		p.nextToken()
-		if p.curToken.Kind == lex.COMMA {
+	for p.curToken.Kind != lex.CLOSEDROUNDED && p.curToken.Kind != lex.END {
+		switch p.curToken.Kind {
+		case lex.STRING, lex.INT:
+			values = append(values, p.curToken.Value)
 			p.nextToken()
-		} else {
-			break
+		case lex.COMMA:
+			p.nextToken()
+		default:
+			panic("unexpected token in values list")
 		}
 	}
 
-	p.expect(lex.CLOSEDROUNDED)
-	p.nextToken()
+	// Only consume CLOSEDROUNDED if present
+	if p.curToken.Kind == lex.CLOSEDROUNDED {
+		p.nextToken()
+	}
 
 	return &InsertStmt{Table: table, Values: values}
 }
