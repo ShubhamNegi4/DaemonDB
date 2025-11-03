@@ -1,11 +1,11 @@
 package main
 
 import (
-	bplus "DaemonDB/B+Tree-Implementation"
-	executor "DaemonDB/Query-Executor"
-	codegen "DaemonDB/Query-Parser/code-generator"
-	lex "DaemonDB/Query-Parser/lexer"
-	"DaemonDB/Query-Parser/parser"
+	bplus "DaemonDB/bplustree"
+	executor "DaemonDB/query_executor"
+	codegen "DaemonDB/query_parser/code-generator"
+	lex "DaemonDB/query_parser/lexer"
+	"DaemonDB/query_parser/parser"
 	"bufio"
 	"bytes"
 

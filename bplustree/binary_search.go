@@ -1,5 +1,5 @@
 package bplus
-
+//binary search for treesearch.go
 func binarySearch(keys [][]byte, target []byte, cmp func(a, b []byte) int) int {
 	low := 0
 	high := len(keys) - 1
@@ -15,7 +15,7 @@ func binarySearch(keys [][]byte, target []byte, cmp func(a, b []byte) int) int {
 	}
 	return -1
 }
-
+//binary search for treeinsertion.go
 func binarySearchInsert(keys [][]byte, target []byte, cmp func(a, b []byte) int) int {
 	lo, hi := 0, len(keys)
 	for lo < hi {
@@ -28,7 +28,7 @@ func binarySearchInsert(keys [][]byte, target []byte, cmp func(a, b []byte) int)
 	}
 	return lo
 }
-
+//binary search for findleaf.go
 func lowerBound(keys [][]byte, target []byte, cmp func(a, b []byte) int) int {
 	lo, hi := 0, len(keys)
 	for lo < hi {

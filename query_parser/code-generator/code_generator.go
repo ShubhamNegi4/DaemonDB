@@ -1,8 +1,8 @@
 package codegen
 
 import (
-	executor "DaemonDB/Query-Executor"
-	"DaemonDB/Query-Parser/parser"
+	executor "DaemonDB/query_executor"
+	"DaemonDB/query_parser/parser"
 	"fmt"
 	"strings"
 )

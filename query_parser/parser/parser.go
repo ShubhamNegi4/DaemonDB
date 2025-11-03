@@ -1,7 +1,7 @@
 package parser
 
 import (
-	lex "DaemonDB/Query-Parser/lexer"
+	lex "DaemonDB/query_parser/lexer"
 	"fmt"
 	"strings"
 )

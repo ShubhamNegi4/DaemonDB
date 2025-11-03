@@ -22,10 +22,16 @@ func (t *BPlusTree) SplitLeaf(leaf *Node) {
 		newRoot.numKeys = 1
 
 		newRoot.id, _ = t.pager.AllocatePage()
+		// set parents
+		leaf.parent = newRoot.id
+		newLeaf.parent = newRoot.id
 		t.root = newRoot.id
 		t.cache.pages[newRoot.id] = newRoot
 	} else {
-		// TODO: insert promoted key into parent (recursive case)
+		// insert promoted key into parent (recursive case)
+		newLeaf.parent = leaf.parent
+		sepKey := newLeaf.key[0]
+		t.insertIntoParent(leaf.parent, leaf.id, sepKey, newLeaf.id)
 	}
 
 	// Add new leaf to cache

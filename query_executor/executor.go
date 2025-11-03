@@ -6,7 +6,7 @@ the vdbe like vm is currently a stack based apporach
 */
 
 import (
-	bplus "DaemonDB/B+Tree-Implementation"
+	bplus "DaemonDB/bplustree"
 	"encoding/json"
 	"fmt"
 )
