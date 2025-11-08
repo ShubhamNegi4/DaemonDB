@@ -26,6 +26,24 @@ func EmitBytecode(stmt parser.Statement) []executor.Instruction {
 			Op: executor.OP_SHOW_DB,
 		})
 
+	case *parser.CreateTableStmt:
+
+		// this cols will actually store the schema of the table
+		cols := []string{}
+		for _, col := range s.Columns {
+			cols = append(cols, col.Type+":"+col.Name) // sepreate int:id
+		}
+		// join all the cols into a string, to get the schema of the table
+		instructions = append(instructions, executor.Instruction{
+			Op:    executor.OP_PUSH_VAL,
+			Value: strings.Join(cols, ","), // id:int,name:varchar like this schema will be stored
+		})
+
+		instructions = append(instructions, executor.Instruction{
+			Op:    executor.OP_CREATE_TABLE,
+			Value: s.TableName,
+		})
+
 	case *parser.InsertStmt:
 		fmt.Println("INSERT", s.Table)
 

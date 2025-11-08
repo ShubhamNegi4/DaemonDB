@@ -84,7 +84,7 @@ func (p *Parser) parseShowDatabases() *ShowDatabasesStmt {
 
 // --- CREATE TABLE ---
 func (p *Parser) parseCreateTable() *CreateTableStmt {
-	// curToken is <tablename>
+	p.nextToken() // curToken is <tablename>
 
 	table := p.curToken.Value
 	p.nextToken()

@@ -1,5 +1,9 @@
 ### current supported queries
 ```
+create database myDb
+
+show databases
+
 select * from mytable
 
 create table mytable{

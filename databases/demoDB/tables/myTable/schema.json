@@ -1,0 +1,13 @@
+{
+  "table_name": "myTable",
+  "columns": [
+    {
+      "name": "id",
+      "type": "int"
+    },
+    {
+      "name": "name",
+      "type": "varchar"
+    }
+  ]
+}

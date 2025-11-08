@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const DB_ROOT = "./databases" // all databases stored here
@@ -37,14 +38,16 @@ type Instruction struct {
 }
 
 type VM struct {
-	tree  *bplus.BPlusTree
-	stack [][]byte
+	tree   *bplus.BPlusTree
+	stack  [][]byte
+	currDb string
 }
 
 func NewVM(tree *bplus.BPlusTree) *VM {
 	return &VM{
-		tree:  tree,
-		stack: make([][]byte, 0),
+		tree:   tree,
+		stack:  make([][]byte, 0),
+		currDb: "demoDB",
 	}
 }
 
@@ -75,6 +78,9 @@ func (vm *VM) Execute(instructions []Instruction) error {
 				}
 			}
 			return nil
+
+		case OP_CREATE_TABLE:
+			return vm.ExecuteCreateTable(instr.Value)
 
 		case OP_INSERT:
 			return vm.ExecuteInsert(instr.Value)
@@ -145,6 +151,71 @@ func (vm *VM) ExecuteShowDatabases() ([]string, error) {
 	}
 
 	return databases, nil
+}
+
+func (vm *VM) ExecuteCreateTable(tableName string) error {
+	// the stack contains the schema of the table seperate by :
+	encodedSchema := string(vm.stack[len(vm.stack)-1])
+	vm.stack = vm.stack[:len(vm.stack)-1]
+
+	println("schema of table: ", encodedSchema)
+	cols := strings.Split(encodedSchema, ",")
+
+	type ColumnDef struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+
+	type TableSchema struct {
+		TableName string      `json:"table_name"`
+		Columns   []ColumnDef `json:"columns"`
+	}
+
+	// store the column defination so that it can be converted to JSON later
+	columnDefs := make([]ColumnDef, 0, len(cols))
+	for _, col := range cols {
+		colItr := strings.Split(col, ":")
+		if len(colItr) != 2 {
+			return fmt.Errorf("invalid column format: %s", col)
+		}
+		columnDefs = append(columnDefs, ColumnDef{Name: colItr[1], Type: colItr[0]})
+	}
+
+	schema := TableSchema{
+		TableName: tableName,
+		Columns:   columnDefs,
+	}
+
+	// inside the current selected db, create a table file
+	tablePath := filepath.Join(DB_ROOT, vm.currDb, "tables", schema.TableName)
+
+	// TODO: check if the table already exists
+
+	if err := os.MkdirAll(tablePath, 0755); err != nil {
+		return fmt.Errorf("cannot create table directory: %w", err)
+	}
+
+	// schema.json stores the schema of the table, data.path will store the data
+	schemaPath := filepath.Join(tablePath, "schema.json")
+	dataPath := filepath.Join(tablePath, "data.dat")
+
+	// writing on disk in json format for debugging purpose
+	// TODO: convert to BSON
+	// also writing to disk should be atomic, this write can be half done if a power loss occurs in the process
+	// TODO: two phase commit protocol + journaling (Redo and Undo logging) will make the writes more secure
+
+	fmt.Printf("the schema to be writtern is: %s:%s\n", schema.TableName, schema.Columns)
+	schemaJson, _ := json.MarshalIndent(schema, "", "  ")
+	fmt.Println(string(schemaJson))
+	if err := os.WriteFile(schemaPath, schemaJson, 0644); err != nil {
+		return fmt.Errorf("cannot write schema: %w", err)
+	}
+
+	_, _ = os.OpenFile(dataPath, os.O_CREATE, 0644)
+
+	fmt.Printf("Table %s created successfully\n", tableName)
+
+	return nil
 }
 
 func (vm *VM) ExecuteInsert(table string) error {
