@@ -27,6 +27,9 @@ const (
 	END
 	INVALID
 	TABLE
+	DATABASE
+	DATABASES
+	SHOW
 )
 
 type Token struct {
@@ -78,6 +81,12 @@ func (tk TokenKind) String() string {
 		return "INVALID"
 	case TABLE:
 		return "TABLE"
+	case DATABASE:
+		return "DATABASE"
+	case DATABASES:
+		return "DATABASES"
+	case SHOW:
+		return "SHOW"
 	default:
 		return "UNKNOWN"
 	}

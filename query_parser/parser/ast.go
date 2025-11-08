@@ -3,6 +3,13 @@ package parser
 // Statement is a generic interface for all statements
 type Statement interface{}
 
+type CreateDatabaseStmt struct {
+	DbName string
+}
+
+type ShowDatabasesStmt struct {
+}
+
 // SELECT statement
 type SelectStmt struct {
 	Columns []string

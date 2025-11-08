@@ -33,6 +33,8 @@ func (p *Parser) expect(kind lex.TokenKind) {
 // Entry point
 func (p *Parser) ParseStatement() Statement {
 	switch p.curToken.Kind {
+	case lex.SHOW:
+		return p.parseShowDatabases()
 	case lex.SELECT:
 		return p.parseSelect()
 	case lex.INSERT:
@@ -43,7 +45,14 @@ func (p *Parser) ParseStatement() Statement {
 		return p.parseDrop()
 	case lex.IDENT: // CREATE TABLE starts with "create"
 		if p.curToken.Value == "create" || p.curToken.Value == "CREATE" {
-			return p.parseCreateTable()
+			p.nextToken() // consume create
+			fmt.Print(p.curToken)
+			switch p.curToken.Value {
+			case "database", "DATABASE":
+				return p.parseCreateDatabase()
+			case "table", "TABLE":
+				return p.parseCreateTable()
+			}
 		}
 	}
 	panic(fmt.Sprintf("unexpected token: %s (%s)", p.curToken.Kind, p.curToken.Value))
@@ -57,6 +66,52 @@ func (p *Parser) ParseStatement() Statement {
 
 
 */
+// --- CREATE DATABASE ---
+func (p *Parser) parseCreateDatabase() *CreateDatabaseStmt {
+	p.nextToken() // curtoken is <databasename>
+	dbName := p.curToken.Value
+	return &CreateDatabaseStmt{DbName: dbName}
+}
+
+// --- SHOW DATABASES ---
+func (p *Parser) parseShowDatabases() *ShowDatabasesStmt {
+	// No additional tokens required
+	p.nextToken()
+	print(p.curToken.Kind, p.curToken.Value)
+	p.expect(lex.DATABASES)
+	return &ShowDatabasesStmt{}
+}
+
+// --- CREATE TABLE ---
+func (p *Parser) parseCreateTable() *CreateTableStmt {
+	// curToken is <tablename>
+
+	table := p.curToken.Value
+	p.nextToken()
+
+	p.expect(lex.OPENCURLY)
+	p.nextToken()
+
+	cols := []ColumnDef{}
+	for p.curToken.Kind == lex.IDENT {
+		name := p.curToken.Value
+		p.nextToken()
+		typ := p.curToken.Value
+		p.nextToken()
+		cols = append(cols, ColumnDef{Name: name, Type: typ})
+
+		if p.curToken.Kind == lex.COMMA {
+			p.nextToken()
+		} else {
+			break
+		}
+	}
+
+	p.expect(lex.CLOSECURLY)
+	p.nextToken()
+
+	return &CreateTableStmt{TableName: table, Columns: cols}
+}
 
 // --- SELECT ---
 func (p *Parser) parseSelect() *SelectStmt {
@@ -84,40 +139,6 @@ func (p *Parser) parseSelect() *SelectStmt {
 	p.nextToken()
 
 	return &SelectStmt{Columns: cols, Table: table}
-}
-
-// --- CREATE TABLE ---
-func (p *Parser) parseCreateTable() *CreateTableStmt {
-	// curToken is "create"
-	p.nextToken()
-	p.expect(lex.TABLE)
-	p.nextToken()
-
-	table := p.curToken.Value
-	p.nextToken()
-
-	p.expect(lex.OPENCURLY)
-	p.nextToken()
-
-	cols := []ColumnDef{}
-	for p.curToken.Kind == lex.IDENT {
-		name := p.curToken.Value
-		p.nextToken()
-		typ := p.curToken.Value
-		p.nextToken()
-		cols = append(cols, ColumnDef{Name: name, Type: typ})
-
-		if p.curToken.Kind == lex.COMMA {
-			p.nextToken()
-		} else {
-			break
-		}
-	}
-
-	p.expect(lex.CLOSECURLY)
-	p.nextToken()
-
-	return &CreateTableStmt{TableName: table, Columns: cols}
 }
 
 // --- INSERT ---

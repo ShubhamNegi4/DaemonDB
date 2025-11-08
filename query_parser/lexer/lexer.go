@@ -142,6 +142,12 @@ func KeyIdentKind(str string) TokenKind {
 		return WHERE
 	case "TABLE":
 		return TABLE
+	case "DATABASE":
+		return DATABASE
+	case "DATABASES":
+		return DATABASES
+	case "SHOW":
+		return SHOW
 	case "DROP":
 		return DROP
 	default:

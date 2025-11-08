@@ -12,6 +12,20 @@ func EmitBytecode(stmt parser.Statement) []executor.Instruction {
 	instructions := []executor.Instruction{}
 
 	switch s := stmt.(type) {
+
+	case *parser.CreateDatabaseStmt:
+		fmt.Println("CREATE DATABASE", s.DbName)
+
+		instructions = append(instructions, executor.Instruction{
+			Op:    executor.OP_CREATE_DB,
+			Value: s.DbName,
+		})
+
+	case *parser.ShowDatabasesStmt:
+		instructions = append(instructions, executor.Instruction{
+			Op: executor.OP_SHOW_DB,
+		})
+
 	case *parser.InsertStmt:
 		fmt.Println("INSERT", s.Table)
 

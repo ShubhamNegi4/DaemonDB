@@ -9,7 +9,11 @@ import (
 	bplus "DaemonDB/bplustree"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 )
+
+const DB_ROOT = "./databases" // all databases stored here
 
 type OpCode byte
 
@@ -19,6 +23,9 @@ const (
 	OP_PUSH_KEY
 
 	// sql command
+	OP_CREATE_DB
+	OP_SHOW_DB
+	OP_CREATE_TABLE
 	OP_INSERT
 	OP_SELECT
 	OP_END
@@ -54,6 +61,21 @@ func (vm *VM) Execute(instructions []Instruction) error {
 			vm.stack = append(vm.stack, []byte(instr.Value))
 			fmt.Printf("  Pushed key: %s\n", instr.Value)
 
+		case OP_CREATE_DB:
+			return vm.ExecuteCreateDatabase(instr.Value)
+
+		case OP_SHOW_DB:
+			databases, err := vm.ExecuteShowDatabases()
+			if err != nil {
+				fmt.Printf("Error: %v\n", err)
+			} else {
+				fmt.Println("Databases:")
+				for _, db := range databases {
+					fmt.Printf("  - %s\n", db)
+				}
+			}
+			return nil
+
 		case OP_INSERT:
 			return vm.ExecuteInsert(instr.Value)
 
@@ -84,6 +106,45 @@ func (vm *VM) serializeRow(values [][]byte) ([]byte, error) {
 		strValues[i] = string(v)
 	}
 	return json.Marshal(strValues)
+}
+
+func (vm *VM) ExecuteCreateDatabase(dbName string) error {
+	println("make a db with: ", dbName)
+	if dbName == "" {
+		return fmt.Errorf("database name cannot be empty")
+	}
+	if err := os.MkdirAll(DB_ROOT, 0755); err != nil {
+		return fmt.Errorf("failed to create DB directory: %w", err)
+	}
+
+	dbPath := filepath.Join(DB_ROOT, dbName)
+
+	if _, err := os.Stat(dbPath); err == nil {
+		return fmt.Errorf("database %s already exists", dbName)
+	}
+	if err := os.Mkdir(dbPath, 0755); err != nil {
+		return fmt.Errorf("failed to create database %s: %w", dbName, err)
+	}
+
+	fmt.Printf("Created database directory: %s\n", dbPath)
+	return nil
+}
+
+func (vm *VM) ExecuteShowDatabases() ([]string, error) {
+	entries, err := os.ReadDir(DB_ROOT)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read DB root directory: %w", err)
+	}
+
+	var databases []string
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			databases = append(databases, entry.Name())
+		}
+	}
+
+	return databases, nil
 }
 
 func (vm *VM) ExecuteInsert(table string) error {

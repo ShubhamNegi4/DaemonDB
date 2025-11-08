@@ -72,6 +72,9 @@ func main() {
 	fmt.Println("\n\n=== Bytecode ===")
 
 	instructions := codegen.EmitBytecode(stmt)
+	// for i, instr := range instructions {
+	// 	fmt.Printf("%d: OP=%v, VALUE=%v\n", i, instr.Op, instr.Value)
+	// }
 
 	fmt.Println("\n=== Execution ===")
 	if err := vm.Execute(instructions); err != nil {
