@@ -2,12 +2,14 @@ package main
 
 import (
 	bplus "DaemonDB/bplustree"
+	heapfile "DaemonDB/heapfile_manager"
 	executor "DaemonDB/query_executor"
 	codegen "DaemonDB/query_parser/code-generator"
 	lex "DaemonDB/query_parser/lexer"
 	"DaemonDB/query_parser/parser"
 	"bufio"
 	"bytes"
+	"path/filepath"
 
 	// "bytes"
 	"fmt"
@@ -22,8 +24,15 @@ func main() {
 	cache := bplus.NewBufferPool(10)
 	tree := bplus.NewBPlusTree(pager, cache, bytes.Compare)
 
-	// Initialize Virtual Database Engine ( byte code executor )
-	vm := executor.NewVM(tree)
+	// db name is hard coded
+	// TODO: a must `USE DATABASE` command will initialize this
+	heapFileDir := filepath.Join(executor.DB_ROOT, "demoDB", "tables")
+	heapFileManager, err := heapfile.NewHeapFileManager(heapFileDir)
+
+	if err != nil {
+		panic(err)
+	}
+	vm := executor.NewVM(tree, heapFileManager)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	inputLines := []string{}

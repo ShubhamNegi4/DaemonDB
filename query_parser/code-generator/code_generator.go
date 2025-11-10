@@ -47,12 +47,11 @@ func EmitBytecode(stmt parser.Statement) []executor.Instruction {
 	case *parser.InsertStmt:
 		fmt.Println("INSERT", s.Table)
 
-		// Push values onto stack (in reverse for correct order)
-		for i := len(s.Values) - 1; i >= 0; i-- {
-			fmt.Println("  PUSH_VAL", s.Values[i])
+		for _, val := range s.Values {
+			fmt.Println("  PUSH_VAL", val)
 			instructions = append(instructions, executor.Instruction{
 				Op:    executor.OP_PUSH_VAL,
-				Value: s.Values[i],
+				Value: val,
 			})
 		}
 		// Execute insert

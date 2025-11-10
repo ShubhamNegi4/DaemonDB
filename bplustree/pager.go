@@ -12,6 +12,7 @@ type Pager interface {
 */
 import (
 	"fmt"
+	"os"
 	"sync"
 )
 
@@ -21,11 +22,25 @@ type InMemoryPager struct {
 	mu       sync.RWMutex
 }
 
+type OnDiskPager struct {
+	file       *os.File
+	pageSize   int
+	numPages   uint32
+	IsPageFull int16 // is page full
+}
+
 func NewInMemoryPager() *InMemoryPager {
 	return &InMemoryPager{
 		pages:    make(map[int64][]byte),
 		nextPage: 1,
 	}
+}
+
+func NewOnDiskPager(indexPath string) (*OnDiskPager, error) {
+	fmt.Printf("this pager is to inserted on : %s", indexPath)
+	return &OnDiskPager{
+		// TODO: implement this
+	}, nil
 }
 
 func (p *InMemoryPager) ReadPage(pageId int64) ([]byte, error) {
