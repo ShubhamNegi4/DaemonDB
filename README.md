@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="./sample_image/Necessary_Image.png" alt="DaemonDB Logo" width="300" />
+  <img src="./Sample_Image/Necessary_Image.png" alt="DaemonDB Logo" width="300" />
 </div>
 
 <h1 align="center">DaemonDB: Lightweight Relational Database Engine</h1>
