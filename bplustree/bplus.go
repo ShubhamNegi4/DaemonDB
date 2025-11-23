@@ -47,6 +47,6 @@ func Bplus() {
 
 	fmt.Println("\n=== Database Stats ===")
 	fmt.Printf("Root ID: %d\n", tree.root)
-	fmt.Printf("Cache size: %d pages\n", len(cache.pages))
+	fmt.Printf("Cache size: %d/%d pages\n", cache.Size(), cache.Capacity())
 	fmt.Printf("Pager next ID: %d\n", pager.nextPage)
 }

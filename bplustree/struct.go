@@ -69,21 +69,4 @@ type Pager interface {
 	Close() error
 }
 
-// ----------------------------- BufferPool (cache) -------------------------
-//
-// Minimal structure only — implement Get/Put/Pin/Unpin and eviction in
-// a separate file to keep concerns separated.
-type BufferPool struct {
-	mu       sync.Mutex
-	pages    map[int64]*Node
-	capacity int
-}
-
-// NewBufferPool constructs a simple buffer-pool backing structure.
-// (Behavioral methods implemented elsewhere.)
-func NewBufferPool(capacity int) *BufferPool {
-	return &BufferPool{
-		pages:    make(map[int64]*Node, capacity),
-		capacity: capacity,
-	}
-}
+// BufferPool structure and methods are implemented in buffer_pool.go

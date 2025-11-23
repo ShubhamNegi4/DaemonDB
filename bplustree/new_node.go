@@ -1,5 +1,6 @@
-// NewNode creates a new node of given type and returns its pointer
 package bplus
+
+// NewNode creates a new node of given type and returns its pointer
 
 func NewNode(nodeType NodeType) *Node {
 	n := &Node{
