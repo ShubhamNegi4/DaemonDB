@@ -92,22 +92,20 @@ func TestHeapFileOperations(t *testing.T) {
 	fmt.Printf("✓ Read row at Page:%d, Slot:%d → %s\n",
 		testPtr.PageNumber, testPtr.SlotIndex, string(readData))
 
-	// Check file size to see how many pages were created
+	// Check that heap file was created
 	heapFile := hfm.files[fileID]
-	stat, err := heapFile.file.Stat()
-	if err != nil {
-		t.Fatalf("Failed to stat heap file: %v", err)
+	if heapFile == nil {
+		t.Fatalf("Heap file not found")
 	}
-	numPages := stat.Size() / int64(PageSize)
 	fmt.Printf("\n=== Summary ===\n")
 	fmt.Printf("Total rows inserted: %d\n", len(testRows))
-	fmt.Printf("Total pages created: %d\n", numPages)
-	fmt.Printf("File size: %d bytes\n", stat.Size())
+	fmt.Printf("Heap file created successfully\n")
 }
 
 func TestMultiplePages(t *testing.T) {
 	// Test that we create multiple pages when needed
 	testDir := "./test_multipage"
+	os.MkdirAll(testDir, 0755)
 	defer os.RemoveAll(testDir)
 
 	hfm, err := NewHeapFileManager(testDir)
@@ -174,6 +172,7 @@ func TestMultiplePages(t *testing.T) {
 func TestSlotDirectory(t *testing.T) {
 	// Test that slot directory works correctly
 	testDir := "./test_slots"
+	os.MkdirAll(testDir, 0755)
 	defer os.RemoveAll(testDir)
 
 	hfm, err := NewHeapFileManager(testDir)
@@ -230,6 +229,7 @@ func TestSlotDirectory(t *testing.T) {
 func TestPageHeader(t *testing.T) {
 	// Test that page headers are correctly maintained
 	testDir := "./test_header"
+	os.MkdirAll(testDir, 0755)
 	defer os.RemoveAll(testDir)
 
 	hfm, err := NewHeapFileManager(testDir)

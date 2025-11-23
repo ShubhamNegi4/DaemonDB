@@ -1,8 +1,8 @@
 package heapfile
 
 import (
+	bplus "DaemonDB/bplustree"
 	"fmt"
-	"os"
 	"path/filepath"
 )
 
@@ -24,14 +24,17 @@ func (hfm *HeapFileManager) LoadHeapFile(fileID uint32, tableName string) (*Heap
 	}
 
 	filePath := filepath.Join(hfm.baseDir, fmt.Sprintf("%s_%d.heap", tableName, fileID))
-	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
+
+	// Create OnDiskPager for the heap file
+	pager, err := bplus.NewOnDiskPager(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open heap file %s: %w", filePath, err)
 	}
 
 	hf := &HeapFile{
-		file:   f,
-		fileID: fileID,
+		fileID:   fileID,
+		pager:    pager,
+		filePath: filePath,
 	}
 
 	hfm.files[fileID] = hf
@@ -56,31 +59,30 @@ func (hf *HeapFile) initializePage(pageNo uint32) error {
 
 	writePageHeader(page, &header)
 
-	// Write page to disk
-	offset := int64(pageNo) * PageSize
-	_, err := hf.file.WriteAt(page, offset)
-	return err
+	// Write page to disk using pager
+	return hf.pager.WritePage(int64(pageNo), page)
 }
 
 // findSuitablePage finds a page with enough space for the required row size
 func (hf *HeapFile) findSuitablePage(requiredSpace uint16) (uint32, error) {
-	// Get file size
-	stat, err := hf.file.Stat()
-	if err != nil {
-		return 0, err
-	}
-
-	numPages := uint32(stat.Size() / PageSize)
-	for pageNum := uint32(0); pageNum < numPages; pageNum++ {
+	// Try reading pages sequentially until we find a suitable one or hit the end
+	// Start from page 0 and go up
+	pageNum := uint32(0)
+	for {
 		page, err := hf.readPage(pageNum)
 		if err != nil {
-			continue
+			// Page doesn't exist yet, create it
+			if err := hf.initializePage(pageNum); err != nil {
+				return 0, err
+			}
+			return pageNum, nil
 		}
 
 		header := readPageHeader(page)
 
 		// Check if page is full
 		if header.IsPageFull != 0 {
+			pageNum++
 			continue
 		}
 
@@ -91,15 +93,10 @@ func (hf *HeapFile) findSuitablePage(requiredSpace uint16) (uint32, error) {
 		if availableSpace >= requiredWithSlot {
 			return pageNum, nil
 		}
-	}
 
-	// No page found, create new one
-	newPageNum := numPages
-	if err := hf.initializePage(newPageNum); err != nil {
-		return 0, err
+		// This page doesn't have enough space, try next
+		pageNum++
 	}
-
-	return newPageNum, nil
 }
 
 // insertRow inserts a row into the heap file and returns a RowPointer

@@ -1,8 +1,8 @@
 package heapfile
 
 import (
+	bplus "DaemonDB/bplustree"
 	"fmt"
-	"os"
 )
 
 // NewHeapFileManager creates a new heap file manager
@@ -19,20 +19,22 @@ func (hfm *HeapFileManager) CreateHeapfile(tableName string, fileID uint32) erro
 	defer hfm.mu.Unlock()
 	fmt.Print("the file id for the table is: ", fileID)
 	filePath := fmt.Sprintf("%s/%s_%d.heap", hfm.baseDir, tableName, fileID)
-	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
+
+	// Create OnDiskPager for the heap file
+	pager, err := bplus.NewOnDiskPager(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to create heap file: %w", err)
+		return fmt.Errorf("failed to create pager for heap file: %w", err)
 	}
 
 	heapFile := &HeapFile{
 		fileID:   fileID,
-		file:     file,
+		pager:    pager,
 		filePath: filePath,
 	}
 
 	// Initialize first page
 	if err := heapFile.initializePage(0); err != nil {
-		file.Close()
+		pager.Close()
 		return err
 	}
 

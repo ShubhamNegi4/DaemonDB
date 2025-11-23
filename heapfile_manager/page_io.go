@@ -1,24 +1,11 @@
 package heapfile
 
-// readPage reads a 4KB page from disk at the given page number
+// readPage reads a 4KB page from disk at the given page number using the pager
 func (hf *HeapFile) readPage(pageNum uint32) ([]byte, error) {
-	page := make([]byte, PageSize)
-	offset := int64(pageNum) * PageSize
-
-	n, err := hf.file.ReadAt(page, offset)
-	if err != nil && n == 0 {
-		return nil, err
-	}
-
-	return page, nil
+	return hf.pager.ReadPage(int64(pageNum))
 }
 
-// writePage writes a 4KB page to disk at the given page number
+// writePage writes a 4KB page to disk at the given page number using the pager
 func (hf *HeapFile) writePage(pageNum uint32, page []byte) error {
-	offset := int64(pageNum) * PageSize
-	_, err := hf.file.WriteAt(page, offset)
-	if err != nil {
-		return err
-	}
-	return hf.file.Sync()
+	return hf.pager.WritePage(int64(pageNum), page)
 }
