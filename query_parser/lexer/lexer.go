@@ -126,6 +126,8 @@ func (l *Lexer) readString() string {
 
 func KeyIdentKind(str string) TokenKind {
 	switch strings.ToUpper(str) {
+	case "USE":
+		return USE
 	case "INSERT":
 		return INSERT
 	case "INTO":

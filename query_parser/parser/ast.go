@@ -12,6 +12,11 @@ type CreateDatabaseStmt struct {
 type ShowDatabasesStmt struct {
 }
 
+// USE DATABASE statement
+type UseDatabaseStatement struct {
+	DbName string
+}
+
 // SELECT statement
 type SelectStmt struct {
 	Columns []string
@@ -25,8 +30,9 @@ type CreateTableStmt struct {
 }
 
 type ColumnDef struct {
-	Name string
-	Type string
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	IsPrimaryKey bool   `json:"is_primary_key"`
 }
 
 // INSERT statement

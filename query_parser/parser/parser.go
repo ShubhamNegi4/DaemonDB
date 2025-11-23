@@ -41,6 +41,8 @@ func (p *Parser) ParseStatement() Statement {
 		return p.parseInsert()
 	case lex.UPDATE:
 		return p.parseUpdate()
+	case lex.USE:
+		return p.parseUseDatabase()
 	case lex.DROP:
 		return p.parseDrop()
 	case lex.IDENT: // CREATE TABLE starts with "create"
@@ -80,6 +82,21 @@ func (p *Parser) parseShowDatabases() *ShowDatabasesStmt {
 	print(p.curToken.Kind, p.curToken.Value)
 	p.expect(lex.DATABASES)
 	return &ShowDatabasesStmt{}
+}
+
+// --- USE DATABASE ---
+func (p *Parser) parseUseDatabase() *UseDatabaseStatement {
+	p.nextToken() // move to the database name
+
+	if p.curToken.Kind != lex.IDENT {
+		panic("expected database name after USE")
+	}
+
+	dbName := p.curToken.Value
+
+	p.nextToken() // consume db name
+
+	return &UseDatabaseStatement{DbName: dbName}
 }
 
 // --- CREATE TABLE ---

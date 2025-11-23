@@ -43,6 +43,7 @@ const (
 	// sql command
 	OP_CREATE_DB
 	OP_SHOW_DB
+	OP_USE_DB
 	OP_CREATE_TABLE
 	OP_INSERT
 	OP_SELECT
@@ -61,6 +62,7 @@ type VM struct {
 	heapfileManager *heapfile.HeapFileManager
 	tableToFileId   map[string]uint32 // table name to heap file id
 	heapFileCounter uint32            // for current db, whats the heap file counter
+	tableSchemas    map[string]TableSchema
 }
 
 type ColumnDef struct {
@@ -111,6 +113,9 @@ func (vm *VM) Execute(instructions []Instruction) error {
 				}
 			}
 			return nil
+
+		case OP_USE_DB:
+			return vm.ExecuteUseDatabase(instr.Value)
 
 		case OP_CREATE_TABLE:
 			return vm.ExecuteCreateTable(instr.Value)
@@ -178,32 +183,50 @@ func (vm *VM) ExecuteShowDatabases() ([]string, error) {
 	return databases, nil
 }
 
-func (vm *VM) ExecuteUseDatabase(dbName string) error {
-	dbPath := filepath.Join(DB_ROOT, dbName)
-
-	// Check if database exists
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		return fmt.Errorf("database '%s' does not exist", dbName)
+func (vm *VM) ExecuteUseDatabase(name string) error {
+	if name == "" {
+		return fmt.Errorf("database name cannot be empty")
 	}
 
-	vm.currDb = dbName
+	// DB directory
+	dbDir := filepath.Join(DB_ROOT, name)
+	tablesDir := filepath.Join(dbDir, "tables")
 
-	// Load existing table_file_mapping before doing anything!
+	// Create it if first time
+	if err := os.MkdirAll(tablesDir, 0755); err != nil {
+		return err
+	}
+
+	// Set current DB in VM
+	vm.currDb = name
+
+	// Update heap file base directory
+	vm.heapfileManager.UpdateBaseDir(tablesDir)
+
+	// Load table-file-id mapping
 	if err := vm.LoadTableFileMapping(); err != nil {
-		return fmt.Errorf("failed to load catalog: %w", err)
+		return err
 	}
 
-	fmt.Printf("Database '%s' selected. Found %d tables.\n",
-		dbName, len(vm.tableToFileId))
+	// Load table schemas
+	if err := vm.LoadAllTableSchemas(); err != nil {
+		return err
+	}
+
+	// Load heap files for each table
+	for tableName, fileID := range vm.tableToFileId {
+		if _, err := vm.heapfileManager.LoadHeapFile(fileID, tableName); err != nil {
+			return fmt.Errorf("failed to load heapfile for %s: %w", tableName, err)
+		}
+	}
 
 	return nil
 }
 
 func (vm *VM) ExecuteCreateTable(tableName string) error {
 
-	// call `USE DATABASE` to load the existing table_file mapping for the current database
-	if err := vm.ExecuteUseDatabase("demoDB"); err != nil {
-		return fmt.Errorf("cannot write schema: %w", err)
+	if vm.currDb == "" {
+		return fmt.Errorf("no database selected. Run: USE <dbname>")
 	}
 
 	// the stack contains the schema of the table seperate by :
@@ -220,7 +243,8 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 		if len(colItr) != 2 {
 			return fmt.Errorf("invalid column format: %s", col)
 		}
-		columnDefs = append(columnDefs, ColumnDef{Name: colItr[0], Type: colItr[1]})
+		fmt.Printf("name: %s", colItr[1])
+		columnDefs = append(columnDefs, ColumnDef{Name: colItr[1], Type: colItr[0]})
 	}
 
 	schema := TableSchema{
@@ -266,6 +290,11 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 }
 
 func (vm *VM) ExecuteInsert(tableName string) error {
+
+	if vm.currDb == "" {
+		return fmt.Errorf("no database selected. Run: USE <dbname>")
+	}
+
 	// load schema of the table
 	schemaPath := filepath.Join(DB_ROOT, vm.currDb, "tables", tableName+"_schema.json")
 	data, err := os.ReadFile(schemaPath)
@@ -278,7 +307,6 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 	if err := json.Unmarshal(data, &schema); err != nil {
 		return fmt.Errorf("invalid schema: %w", err)
 	}
-
 	// get the file id, that is reserved for this table
 	fileID, ok := vm.tableToFileId[tableName]
 	if !ok {
@@ -307,6 +335,8 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 			len(columnNames), len(values))
 	}
 
+	fmt.Println("Schema columns:", schema.Columns)
+
 	/*
 
 		#### HeapFileManager writes ROW DATA to disk ####
@@ -319,6 +349,9 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 	if err != nil {
 		return err
 	}
+
+	fmt.Print("file Id: ", fileID)
+	fmt.Print("row:  ", string(row))
 
 	rowPtr, err := vm.heapfileManager.InsertRow(fileID, row)
 	if err != nil {

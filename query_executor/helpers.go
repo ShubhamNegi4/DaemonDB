@@ -9,43 +9,93 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
+
+func toInt(v any) (int64, error) {
+	switch x := v.(type) {
+	case int:
+		return int64(x), nil
+	case int64:
+		return x, nil
+	case float64:
+		return int64(x), nil
+	case string:
+		i, err := strconv.Atoi(x)
+		if err != nil {
+			return 0, fmt.Errorf("cannot convert string to int: %s", x)
+		}
+		return int64(i), nil
+	case []byte:
+		i, err := strconv.Atoi(string(x))
+		if err != nil {
+			return 0, fmt.Errorf("cannot convert []byte to int: %s", x)
+		}
+		return int64(i), nil
+	default:
+		return 0, fmt.Errorf("expected int, got %T", v)
+	}
+}
+
+func toString(v any) (string, error) {
+	switch x := v.(type) {
+	case string:
+		return x, nil
+	case []byte:
+		return string(x), nil
+	case int:
+		return strconv.Itoa(x), nil // NEW
+	case int64:
+		return strconv.FormatInt(x, 10), nil // NEW
+	case float64:
+		return strconv.FormatInt(int64(x), 10), nil // NEW
+	default:
+		return "", fmt.Errorf("expected string, got %T", v)
+	}
+}
 
 func (vm *VM) SerializeRow(cols []ColumnDef, values []any) ([]byte, error) {
 	row := new(bytes.Buffer)
+
 	for i, col := range cols {
-		switch col.Type {
-		case "INT", "int":
-			v := values[i].(int)
-			binary.Write(row, binary.LittleEndian, int64(v))
-		case "VARCHAR", "varchar":
-			s := values[i].(string)
-			binary.Write(row, binary.LittleEndian, uint16(len(s)))
-			row.Write([]byte(s))
-		default:
-			panic("unknown column type")
+		data, err := ValueToBytes(values[i], col.Type)
+		if err != nil {
+			return nil, fmt.Errorf("column %s: %w", col.Name, err)
 		}
+		row.Write(data)
 	}
+
 	return row.Bytes(), nil
 }
 
 func ValueToBytes(value any, colType string) ([]byte, error) {
-	switch colType {
-	case "INT", "INTEGER":
-		v, ok := value.(uint64)
-		if !ok {
-			return nil, fmt.Errorf("expected int, got %T", value)
+	buf := new(bytes.Buffer)
+
+	switch strings.ToUpper(colType) {
+
+	case "INT":
+		i, err := toInt(value)
+		if err != nil {
+			return nil, err
 		}
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, v)
-		return buf, nil
+		if err := binary.Write(buf, binary.LittleEndian, i); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
 
 	case "VARCHAR":
-		v, ok := value.(string)
-		if !ok {
-			return nil, fmt.Errorf("expected string, got %T", value)
+		s, err := toString(value)
+		if err != nil {
+			return nil, err
 		}
-		return []byte(v), nil
+
+		if err := binary.Write(buf, binary.LittleEndian, uint16(len(s))); err != nil {
+			return nil, err
+		}
+
+		buf.Write([]byte(s))
+		return buf.Bytes(), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported column type: %s", colType)
@@ -96,7 +146,7 @@ func (vm *VM) LoadTableFileMapping() error {
 		if os.IsNotExist(err) {
 			// First time, initialize empty mapping
 			vm.tableToFileId = make(map[string]uint32)
-			vm.heapFileCounter = 0
+			vm.heapFileCounter = 1
 			return nil
 		}
 		return fmt.Errorf("failed to read mapping file: %w", err)
@@ -113,6 +163,50 @@ func (vm *VM) LoadTableFileMapping() error {
 
 	vm.heapFileCounter = mappingData.Counter
 	vm.tableToFileId = mappingData.Mappings
+
+	return nil
+}
+
+func (vm *VM) LoadAllTableSchemas() error {
+	if vm.currDb == "" {
+		return fmt.Errorf("no database selected")
+	}
+
+	tablesDir := filepath.Join(DB_ROOT, vm.currDb, "tables")
+
+	entries, err := os.ReadDir(tablesDir)
+	if err != nil {
+		return fmt.Errorf("failed to read tables directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, "_schema.json") {
+			continue
+		}
+
+		schemaPath := filepath.Join(tablesDir, name)
+		data, err := os.ReadFile(schemaPath)
+		if err != nil {
+			return fmt.Errorf("failed to read schema file %s: %w", schemaPath, err)
+		}
+
+		var schema TableSchema
+		if err := json.Unmarshal(data, &schema); err != nil {
+			return fmt.Errorf("invalid schema in file %s: %w", schemaPath, err)
+		}
+
+		// Register table in VM
+		vm.tableToFileId[schema.TableName] = vm.tableToFileId[schema.TableName] // existing mapping
+		// Optionally, keep a schema map for quick access
+		if vm.tableSchemas == nil {
+			vm.tableSchemas = make(map[string]TableSchema)
+		}
+		vm.tableSchemas[schema.TableName] = schema
+	}
 
 	return nil
 }

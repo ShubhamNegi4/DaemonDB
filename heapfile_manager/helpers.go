@@ -2,7 +2,42 @@ package heapfile
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 )
+
+func (hfm *HeapFileManager) UpdateBaseDir(dir string) {
+	hfm.mu.Lock()
+	defer hfm.mu.Unlock()
+	hfm.baseDir = dir
+}
+
+func (hfm *HeapFileManager) LoadHeapFile(fileID uint32, tableName string) (*HeapFile, error) {
+
+	fmt.Printf("need to load %s, %d", tableName, fileID)
+	hfm.mu.Lock()
+	defer hfm.mu.Unlock()
+
+	// Already loaded?
+	if hf, exists := hfm.files[fileID]; exists {
+		return hf, nil
+	}
+
+	filePath := filepath.Join(hfm.baseDir, fmt.Sprintf("%s_%d.heap", tableName, fileID))
+	f, err := os.OpenFile(filePath, os.O_RDWR, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open heap file %s: %w", filePath, err)
+	}
+
+	hf := &HeapFile{
+		file:   f,
+		fileID: fileID,
+	}
+
+	hfm.files[fileID] = hf
+	fmt.Printf("Loaded heap file %d (%s)\n", fileID, filePath)
+	return hf, nil
+}
 
 // initializePage initializes a new empty page with header and empty slot directory
 func (hf *HeapFile) initializePage(pageNo uint32) error {

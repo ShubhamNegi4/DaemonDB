@@ -9,7 +9,7 @@ import (
 	"DaemonDB/query_parser/parser"
 	"bufio"
 	"bytes"
-	"path/filepath"
+	"log"
 
 	// "bytes"
 	"fmt"
@@ -25,9 +25,11 @@ func main() {
 	tree := bplus.NewBPlusTree(pager, cache, bytes.Compare)
 
 	// db name is hard coded
-	// TODO: a must `USE DATABASE` command will initialize this
-	heapFileDir := filepath.Join(executor.DB_ROOT, "demoDB", "tables")
-	heapFileManager, err := heapfile.NewHeapFileManager(heapFileDir)
+	// a must `USE DATABASE` command will initialize this
+	heapFileManager, err := heapfile.NewHeapFileManager("")
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	if err != nil {
 		panic(err)
@@ -35,70 +37,73 @@ func main() {
 	vm := executor.NewVM(tree, heapFileManager)
 
 	scanner := bufio.NewScanner(os.Stdin)
-	inputLines := []string{}
-
+	// REPL
 	for {
+		fmt.Print("db> ")
+
 		if !scanner.Scan() { // Ctrl+D pressed
 			break
 		}
-		line := scanner.Text()
-		inputLines = append(inputLines, line)
-	}
 
-	if err := scanner.Err(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error reading input:", err)
-		return
-	}
+		line := strings.TrimSpace(scanner.Text())
+		if strings.EqualFold(line, "exit") {
+			break
+		}
+		if line == "" {
+			continue
+		}
 
-	query := strings.Join(inputLines, " ")
+		// user typed a single SQL query
+		query := line
 
-	/*
-		// printing tokens
+		/*
+			// printing tokens
 
-		l := lex.New(query)
-		tokens := []lex.Token{}
-		for {
-			tok := l.NextToken()
-			tokens = append(tokens, tok)
-			if tok.Kind == lex.END {
-				break
+			l := lex.New(query)
+			tokens := []lex.Token{}
+			for {
+				tok := l.NextToken()
+				tokens = append(tokens, tok)
+				if tok.Kind == lex.END {
+					break
+				}
 			}
+			for i := range tokens {
+				fmt.Printf("kind: %s     value: %s\n", tokens[i].Kind, tokens[i].Value)
+			}
+		*/
+
+		// Lexer + Parser
+		l := lex.New(query)
+		p := parser.New(l)
+
+		stmt := p.ParseStatement()
+
+		fmt.Println("\n=== AST ===")
+		fmt.Printf("%#v", stmt)
+
+		fmt.Println("\n\n=== Bytecode ===")
+
+		instructions := codegen.EmitBytecode(stmt)
+		for i, instr := range instructions {
+			fmt.Printf("%d: OP=%v, VALUE=%v\n", i, instr.Op, instr.Value)
 		}
-		for i := range tokens {
-			fmt.Printf("kind: %s     value: %s\n", tokens[i].Kind, tokens[i].Value)
+
+		fmt.Println("\n=== Execution ===")
+		if err := vm.Execute(instructions); err != nil {
+			fmt.Printf("Error: %v\n", err)
 		}
-	*/
 
-	// Lexer + Parser
-	l := lex.New(query)
-	p := parser.New(l)
-
-	stmt := p.ParseStatement()
-
-	fmt.Println("\n=== AST ===")
-	fmt.Printf("%#v", stmt)
-
-	fmt.Println("\n\n=== Bytecode ===")
-
-	instructions := codegen.EmitBytecode(stmt)
-	for i, instr := range instructions {
-		fmt.Printf("%d: OP=%v, VALUE=%v\n", i, instr.Op, instr.Value)
-	}
-
-	fmt.Println("\n=== Execution ===")
-	if err := vm.Execute(instructions); err != nil {
-		fmt.Printf("Error: %v\n", err)
-	}
-
-	// testing
-	fmt.Println("\n=== TESTING ===")
-	searchIDs := []string{"34", "asdf", "S999"}
-	for _, id := range searchIDs {
-		result, _ := tree.Search([]byte(id))
-		if result != nil {
-			fmt.Printf("Found %s --> %s\n", id, string(result))
-		} else {
-			fmt.Printf("Student %s not found\n", id)
+		// testing
+		fmt.Println("\n=== TESTING ===")
+		searchIDs := []string{"34", "asdf", "S999"}
+		for _, id := range searchIDs {
+			result, _ := tree.Search([]byte(id))
+			if result != nil {
+				fmt.Printf("Found %s --> %s\n", id, string(result))
+			} else {
+				fmt.Printf("Student %s not found\n", id)
+			}
 		}
 	}
 }

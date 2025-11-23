@@ -7,9 +7,6 @@ import (
 
 // NewHeapFileManager creates a new heap file manager
 func NewHeapFileManager(baseDir string) (*HeapFileManager, error) {
-	if err := os.MkdirAll(baseDir, 0755); err != nil {
-		return nil, err
-	}
 	return &HeapFileManager{
 		baseDir: baseDir,
 		files:   make(map[uint32]*HeapFile),
@@ -20,7 +17,7 @@ func NewHeapFileManager(baseDir string) (*HeapFileManager, error) {
 func (hfm *HeapFileManager) CreateHeapfile(tableName string, fileID uint32) error {
 	hfm.mu.Lock()
 	defer hfm.mu.Unlock()
-
+	fmt.Print("the file id for the table is: ", fileID)
 	filePath := fmt.Sprintf("%s/%s_%d.heap", hfm.baseDir, tableName, fileID)
 	file, err := os.OpenFile(filePath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {

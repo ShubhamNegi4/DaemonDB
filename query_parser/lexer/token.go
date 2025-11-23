@@ -7,6 +7,7 @@ const (
 	IDENT TokenKind = iota
 
 	// keywords
+	USE
 	INSERT
 	INTO
 	SELECT
@@ -39,6 +40,8 @@ type Token struct {
 
 func (tk TokenKind) String() string {
 	switch tk {
+	case USE:
+		return "USE"
 	case IDENT:
 		return "IDENT"
 	case INSERT:

@@ -26,6 +26,14 @@ func EmitBytecode(stmt parser.Statement) []executor.Instruction {
 			Op: executor.OP_SHOW_DB,
 		})
 
+	case *parser.UseDatabaseStatement:
+		fmt.Println("USE DATABASE", s.DbName)
+
+		instructions = append(instructions, executor.Instruction{
+			Op:    executor.OP_USE_DB,
+			Value: s.DbName,
+		})
+
 	case *parser.CreateTableStmt:
 
 		// this cols will actually store the schema of the table
