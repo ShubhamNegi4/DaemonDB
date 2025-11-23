@@ -267,23 +267,22 @@ func (vm *VM) GetOrCreateIndex(tableName string) (*bplus.BPlusTree, error) {
 	return btree, nil
 }
 
-// TODO: complete this function
-
+// OpenBPlusTree opens or creates a B+ tree index file
 func OpenBPlusTree(indexPath string) (*bplus.BPlusTree, error) {
-	// The pager handles all disk I/O
+	// Create/open the disk pager for the index file
 	pager, err := bplus.NewOnDiskPager(indexPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create pager: %w", err)
 	}
 
-	// Check if this is a new index or existing one
-	if pager.IsPageFull != 0 {
-		// Create new root page
+	// Create a buffer pool for caching nodes in memory
+	// Capacity of 10 means we can cache up to 10 nodes
+	cache := bplus.NewBufferPool(10)
 
-		// bplus tree page will write this new page to disk
+	// Create the B+ tree with the pager, cache, and default byte comparison
+	// If the index file is new, root will be 0 (empty tree)
+	// If the index file exists, we'll need to load the root from metadata (TODO: implement root persistence)
+	btree := bplus.NewBPlusTree(pager, cache, bytes.Compare)
 
-	}
-
-	// return this bplus tree to be worked on
-	return &bplus.BPlusTree{}, nil
+	return btree, nil
 }
