@@ -1,7 +1,6 @@
 package heapfile
 
 import (
-	bplus "DaemonDB/bplustree"
 	"fmt"
 )
 
@@ -17,11 +16,11 @@ func NewHeapFileManager(baseDir string) (*HeapFileManager, error) {
 func (hfm *HeapFileManager) CreateHeapfile(tableName string, fileID uint32) error {
 	hfm.mu.Lock()
 	defer hfm.mu.Unlock()
-	fmt.Print("the file id for the table is: ", fileID)
+	// fmt.Printf("the file id for the table is: %d\n", fileID)
 	filePath := fmt.Sprintf("%s/%s_%d.heap", hfm.baseDir, tableName, fileID)
 
 	// Create OnDiskPager for the heap file
-	pager, err := bplus.NewOnDiskPager(filePath)
+	pager, err := NewHeapFilePager(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to create pager for heap file: %w", err)
 	}
@@ -42,19 +41,6 @@ func (hfm *HeapFileManager) CreateHeapfile(tableName string, fileID uint32) erro
 	return nil
 }
 
-// InsertRow inserts a row into the specified heap file
-func (hfm *HeapFileManager) InsertRow(fileID uint32, rowData []byte) (*RowPointer, error) {
-	hfm.mu.RLock()
-	heapFile, exists := hfm.files[fileID]
-	hfm.mu.RUnlock()
-
-	if !exists {
-		return nil, fmt.Errorf("heap file %d not found", fileID)
-	}
-
-	return heapFile.insertRow(rowData)
-}
-
 // GetRow retrieves a row from the heap file using a RowPointer
 func (hfm *HeapFileManager) GetRow(ptr *RowPointer) ([]byte, error) {
 	hfm.mu.RLock()
@@ -66,4 +52,32 @@ func (hfm *HeapFileManager) GetRow(ptr *RowPointer) ([]byte, error) {
 	}
 
 	return heapFile.GetRow(ptr)
+}
+
+func (hfm *HeapFileManager) GetHeapFileByID(fileID uint32) (*HeapFile, error) {
+	hfm.mu.RLock()
+	hf, exists := hfm.files[fileID]
+	hfm.mu.RUnlock()
+
+	if !exists {
+		return nil, fmt.Errorf("heap file %d not found", fileID)
+	}
+
+	return hf, nil
+}
+
+// CloseAll closes all heap files managed by this manager
+func (hfm *HeapFileManager) CloseAll() error {
+	hfm.mu.Lock()
+	defer hfm.mu.Unlock()
+
+	var lastErr error
+	for fileID, heapFile := range hfm.files {
+		if err := heapFile.pager.Close(); err != nil {
+			fmt.Printf("Error closing heap file %d: %v\n", fileID, err)
+			lastErr = err
+		}
+	}
+
+	return lastErr
 }

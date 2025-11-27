@@ -67,6 +67,7 @@ type Pager interface {
 	DeallocatePage(pageID int64) error
 	Sync() error
 	Close() error
+	TotalPages() int64
 }
 
 // BufferPool structure and methods are implemented in buffer_pool.go

@@ -20,11 +20,10 @@ import (
 func main() {
 
 	// Initialize B+ Tree
-	pager := bplus.NewInMemoryPager()
+	pager, _ := bplus.NewOnDiskPager("")
 	cache := bplus.NewBufferPool(10)
 	tree := bplus.NewBPlusTree(pager, cache, bytes.Compare)
 
-	// db name is hard coded
 	// a must `USE DATABASE` command will initialize this
 	heapFileManager, err := heapfile.NewHeapFileManager("")
 	if err != nil {
@@ -39,7 +38,7 @@ func main() {
 	scanner := bufio.NewScanner(os.Stdin)
 	// REPL
 	for {
-		fmt.Print("db> ")
+		fmt.Print("daemon> ")
 
 		if !scanner.Scan() { // Ctrl+D pressed
 			break
@@ -92,18 +91,6 @@ func main() {
 		fmt.Println("\n=== Execution ===")
 		if err := vm.Execute(instructions); err != nil {
 			fmt.Printf("Error: %v\n", err)
-		}
-
-		// testing
-		fmt.Println("\n=== TESTING ===")
-		searchIDs := []string{"34", "asdf", "S999"}
-		for _, id := range searchIDs {
-			result, _ := tree.Search([]byte(id))
-			if result != nil {
-				fmt.Printf("Found %s --> %s\n", id, string(result))
-			} else {
-				fmt.Printf("Student %s not found\n", id)
-			}
 		}
 	}
 }

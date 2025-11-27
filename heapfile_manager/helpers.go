@@ -1,7 +1,6 @@
 package heapfile
 
 import (
-	bplus "DaemonDB/bplustree"
 	"fmt"
 	"path/filepath"
 )
@@ -14,7 +13,7 @@ func (hfm *HeapFileManager) UpdateBaseDir(dir string) {
 
 func (hfm *HeapFileManager) LoadHeapFile(fileID uint32, tableName string) (*HeapFile, error) {
 
-	fmt.Printf("need to load %s, %d", tableName, fileID)
+	// fmt.Printf("\nLoading Tables..... \n%s --> %d\n", tableName, fileID)
 	hfm.mu.Lock()
 	defer hfm.mu.Unlock()
 
@@ -26,7 +25,7 @@ func (hfm *HeapFileManager) LoadHeapFile(fileID uint32, tableName string) (*Heap
 	filePath := filepath.Join(hfm.baseDir, fmt.Sprintf("%s_%d.heap", tableName, fileID))
 
 	// Create OnDiskPager for the heap file
-	pager, err := bplus.NewOnDiskPager(filePath)
+	pager, err := NewHeapFilePager(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open heap file %s: %w", filePath, err)
 	}
@@ -38,65 +37,21 @@ func (hfm *HeapFileManager) LoadHeapFile(fileID uint32, tableName string) (*Heap
 	}
 
 	hfm.files[fileID] = hf
-	fmt.Printf("Loaded heap file %d (%s)\n", fileID, filePath)
+	// fmt.Printf("\nLoaded heap file %d (%s)\n", fileID, filePath)
 	return hf, nil
 }
 
-// initializePage initializes a new empty page with header and empty slot directory
-func (hf *HeapFile) initializePage(pageNo uint32) error {
-	page := make([]byte, PageSize)
+// InsertRow inserts a row into the specified heap file
+func (hfm *HeapFileManager) InsertRow(fileID uint32, rowData []byte) (*RowPointer, error) {
+	hfm.mu.RLock()
+	heapFile, exists := hfm.files[fileID]
+	hfm.mu.RUnlock()
 
-	// Initialize header
-	header := PageHeader{
-		FileID:      hf.fileID,
-		PageNo:      pageNo,
-		FreePtr:     PageHeaderSize, // Start data area right after header
-		NumRows:     0,
-		NumRowsFree: PageSize - PageHeaderSize,
-		IsPageFull:  0,
-		SlotCount:   0, // No slots initially
+	if !exists {
+		return nil, fmt.Errorf("heap file %d not found", fileID)
 	}
 
-	writePageHeader(page, &header)
-
-	// Write page to disk using pager
-	return hf.pager.WritePage(int64(pageNo), page)
-}
-
-// findSuitablePage finds a page with enough space for the required row size
-func (hf *HeapFile) findSuitablePage(requiredSpace uint16) (uint32, error) {
-	// Try reading pages sequentially until we find a suitable one or hit the end
-	// Start from page 0 and go up
-	pageNum := uint32(0)
-	for {
-		page, err := hf.readPage(pageNum)
-		if err != nil {
-			// Page doesn't exist yet, create it
-			if err := hf.initializePage(pageNum); err != nil {
-				return 0, err
-			}
-			return pageNum, nil
-		}
-
-		header := readPageHeader(page)
-
-		// Check if page is full
-		if header.IsPageFull != 0 {
-			pageNum++
-			continue
-		}
-
-		// Calculate available space (considering slot directory)
-		availableSpace := calculateFreeSpace(header)
-		requiredWithSlot := requiredSpace + SlotSize // row + new slot entry
-
-		if availableSpace >= requiredWithSlot {
-			return pageNum, nil
-		}
-
-		// This page doesn't have enough space, try next
-		pageNum++
-	}
+	return heapFile.insertRow(rowData)
 }
 
 // insertRow inserts a row into the heap file and returns a RowPointer
@@ -196,4 +151,42 @@ func (hf *HeapFile) GetRow(ptr *RowPointer) ([]byte, error) {
 	}
 
 	return rowData, nil
+}
+
+func (hf *HeapFile) GetAllRowPointers() []*RowPointer {
+	hf.mu.RLock()
+	defer hf.mu.RUnlock()
+
+	var result []*RowPointer
+
+	totalPages := hf.pager.TotalPages()
+	// fmt.Println("total pages:", totalPages)
+
+	for pageID := int64(0); pageID < totalPages; pageID++ {
+		pageData, err := hf.pager.ReadPage(pageID)
+		if err != nil {
+			fmt.Printf("Error reading page %d: %v\n", pageID, err)
+			continue
+		}
+
+		// page header to get slot count
+		header := readPageHeader(pageData)
+		if header == nil {
+			continue
+		}
+
+		for slotIdx := uint16(0); slotIdx < header.SlotCount; slotIdx++ {
+			slot := readSlot(pageData, slotIdx)
+			// if slot is valid (not deleted/empty)
+			if slot != nil && slot.Offset != 0 && slot.Length != 0 {
+				result = append(result, &RowPointer{
+					FileID:     hf.fileID,
+					PageNumber: uint32(pageID),
+					SlotIndex:  slotIdx,
+				})
+			}
+		}
+	}
+
+	return result
 }

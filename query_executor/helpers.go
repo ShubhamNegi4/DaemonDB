@@ -7,32 +7,44 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 )
 
-func toInt(v any) (int64, error) {
+/*
+
+********************************* TYPE CONVERSION HELPERS *********************************
+
+ */
+
+func toInt(v any) (int32, error) {
 	switch x := v.(type) {
 	case int:
-		return int64(x), nil
-	case int64:
+		return int32(x), nil
+	case int32:
 		return x, nil
+	case int64:
+		return int32(x), nil
 	case float64:
-		return int64(x), nil
+		return int32(x), nil
+	case float32:
+		return int32(x), nil
 	case string:
 		i, err := strconv.Atoi(x)
 		if err != nil {
-			return 0, fmt.Errorf("cannot convert string to int: %s", x)
+			return 0, fmt.Errorf("cannot convert %q to int", x)
 		}
-		return int64(i), nil
+		return int32(i), nil
 	case []byte:
-		i, err := strconv.Atoi(string(x))
+		s := strings.TrimSpace(string(x))
+		i, err := strconv.Atoi(s)
 		if err != nil {
-			return 0, fmt.Errorf("cannot convert []byte to int: %s", x)
+			return 0, fmt.Errorf("cannot convert %q to int", s)
 		}
-		return int64(i), nil
+		return int32(i), nil
 	default:
 		return 0, fmt.Errorf("expected int, got %T", v)
 	}
@@ -43,63 +55,172 @@ func toString(v any) (string, error) {
 	case string:
 		return x, nil
 	case []byte:
-		return string(x), nil
-	case int:
-		return strconv.Itoa(x), nil // NEW
-	case int64:
-		return strconv.FormatInt(x, 10), nil // NEW
-	case float64:
-		return strconv.FormatInt(int64(x), 10), nil // NEW
+		return strings.TrimSpace(string(x)), nil
+	case int, int32, int64:
+		return fmt.Sprintf("%d", x), nil
+	case float32, float64:
+		return fmt.Sprintf("%g", x), nil
 	default:
 		return "", fmt.Errorf("expected string, got %T", v)
 	}
 }
 
+func toFloat(v any) (float32, error) {
+	switch x := v.(type) {
+
+	case float64:
+		return float32(x), nil
+
+	case float32:
+		return x, nil
+
+	case int:
+		return float32(x), nil
+
+	case int32:
+		return float32(x), nil
+
+	case int64:
+		return float32(x), nil
+
+	case string:
+		f, err := strconv.ParseFloat(x, 32)
+		if err != nil {
+			return 0, fmt.Errorf("cannot convert %q to float", x)
+		}
+		return float32(f), nil
+
+	case []byte:
+		s := strings.TrimSpace(string(x))
+		f, err := strconv.ParseFloat(s, 32)
+		if err != nil {
+			return 0, fmt.Errorf("cannot convert %q to float", s)
+		}
+		return float32(f), nil
+
+	default:
+		return 0, fmt.Errorf("expected float, got %T", v)
+	}
+}
+
 func (vm *VM) SerializeRow(cols []ColumnDef, values []any) ([]byte, error) {
-	row := new(bytes.Buffer)
+	buf := new(bytes.Buffer)
 
 	for i, col := range cols {
-		data, err := ValueToBytes(values[i], col.Type)
+		b, err := ValueToBytes(values[i], col.Type)
 		if err != nil {
 			return nil, fmt.Errorf("column %s: %w", col.Name, err)
 		}
-		row.Write(data)
+		buf.Write(b)
 	}
 
-	return row.Bytes(), nil
+	result := buf.Bytes()
+	return result, nil
 }
 
-func ValueToBytes(value any, colType string) ([]byte, error) {
+func ValueToBytes(val any, typ string) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
-	switch strings.ToUpper(colType) {
+	switch strings.ToUpper(typ) {
 
 	case "INT":
-		i, err := toInt(value)
+		i32, err := toInt(val)
 		if err != nil {
 			return nil, err
 		}
-		if err := binary.Write(buf, binary.LittleEndian, i); err != nil {
+		// Always 4 bytes
+		if err := binary.Write(buf, binary.LittleEndian, i32); err != nil {
+			return nil, err
+		}
+		return buf.Bytes(), nil
+
+	case "FLOAT":
+		f32, err := toFloat(val)
+		if err != nil {
+			return nil, err
+		}
+		bits := math.Float32bits(f32)
+		if err := binary.Write(buf, binary.LittleEndian, bits); err != nil {
 			return nil, err
 		}
 		return buf.Bytes(), nil
 
 	case "VARCHAR":
-		s, err := toString(value)
+		s, err := toString(val)
 		if err != nil {
 			return nil, err
 		}
+		if len(s) > 65535 {
+			return nil, fmt.Errorf("varchar too long")
+		}
 
+		// length prefix
 		if err := binary.Write(buf, binary.LittleEndian, uint16(len(s))); err != nil {
 			return nil, err
 		}
-
 		buf.Write([]byte(s))
 		return buf.Bytes(), nil
-
-	default:
-		return nil, fmt.Errorf("unsupported column type: %s", colType)
 	}
+
+	return nil, fmt.Errorf("unsupported type %s", typ)
+}
+
+func BytesToValue(b []byte, typ string) (any, int, error) {
+	switch strings.ToUpper(typ) {
+
+	case "INT":
+		if len(b) < 4 {
+			return nil, 0, fmt.Errorf("not enough bytes for int")
+		}
+		i := int32(binary.LittleEndian.Uint32(b[:4]))
+		return int(i), 4, nil
+
+	case "FLOAT":
+		if len(b) < 4 {
+			return nil, 0, fmt.Errorf("not enough bytes for float")
+		}
+		bits := binary.LittleEndian.Uint32(b[:4])
+		f := math.Float32frombits(bits)
+		return float64(f), 4, nil
+
+	case "VARCHAR":
+		if len(b) < 2 {
+			return nil, 0, fmt.Errorf("not enough bytes for varchar length")
+		}
+		strlen := binary.LittleEndian.Uint16(b[:2])
+		if len(b) < int(2+strlen) {
+			return nil, 0, fmt.Errorf("varchar length exceeds row size")
+		}
+		s := string(b[2 : 2+strlen])
+		return s, int(2 + strlen), nil
+	}
+
+	return nil, 0, fmt.Errorf("unknown type %s", typ)
+}
+
+func (vm *VM) DeserializeRow(row []byte, cols []ColumnDef) ([]any, error) {
+	out := make([]any, len(cols))
+	offset := 0
+
+	for i, col := range cols {
+		if offset >= len(row) {
+			return nil, fmt.Errorf("not enough data for column %s (offset %d >= row length %d)",
+				col.Name, offset, len(row))
+		}
+
+		val, read, err := BytesToValue(row[offset:], col.Type)
+		if err != nil {
+			return nil, fmt.Errorf("column %s at offset %d: %w", col.Name, offset, err)
+		}
+		out[i] = val
+		offset += read
+	}
+
+	if offset != len(row) {
+		return nil, fmt.Errorf("extra bytes at end of row: expected total %d bytes, got %d bytes (unused: %d bytes)",
+			offset, len(row), len(row)-offset)
+	}
+	return out, nil
 }
 
 func (vm *VM) SerializeRowPointer(ptr *heapfile.RowPointer) []byte {
@@ -108,6 +229,13 @@ func (vm *VM) SerializeRowPointer(ptr *heapfile.RowPointer) []byte {
 	binary.LittleEndian.PutUint32(buf[4:8], ptr.PageNumber)
 	return buf
 }
+
+/*
+
+******************************* LOAD and SAVE MAPPINGS and TABLE SCHEMA *******************************
+
+
+ */
 
 func (vm *VM) SaveTableFileMapping() error {
 	mappingPath := filepath.Join(DB_ROOT, vm.currDb, "table_file_mapping.json")
@@ -199,9 +327,7 @@ func (vm *VM) LoadAllTableSchemas() error {
 			return fmt.Errorf("invalid schema in file %s: %w", schemaPath, err)
 		}
 
-		// Register table in VM
-		vm.tableToFileId[schema.TableName] = vm.tableToFileId[schema.TableName] // existing mapping
-		// Optionally, keep a schema map for quick access
+		// Register table schema in VM
 		if vm.tableSchemas == nil {
 			vm.tableSchemas = make(map[string]TableSchema)
 		}
@@ -210,6 +336,12 @@ func (vm *VM) LoadAllTableSchemas() error {
 
 	return nil
 }
+
+/*
+
+********************************* INDEXING FOR BPLUS TREE *********************************
+
+ */
 
 func (vm *VM) ExtractPrimaryKey(schema TableSchema, values []any, rowPtr *heapfile.RowPointer) ([]byte, string, error) {
 	// Option 1: Use explicit primary key if defined
@@ -255,14 +387,13 @@ func (vm *VM) GetOrCreateIndex(tableName string) (*bplus.BPlusTree, error) {
 		return nil, fmt.Errorf("table '%s' does not exist", tableName)
 	}
 
-	// // TODO: Create or open B+ tree
-	fmt.Printf("Opening B+ tree index: %s\n", indexPath)
+	// fmt.Printf("Opening B+ tree index: %s\n", indexPath)
 	btree, err := OpenBPlusTree(indexPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open B+ tree: %w", err)
 	}
 
-	fmt.Printf("Index opened: %s\n", indexKey)
+	// fmt.Printf("Index opened: %s\n", indexKey)
 
 	return btree, nil
 }
@@ -285,4 +416,41 @@ func OpenBPlusTree(indexPath string) (*bplus.BPlusTree, error) {
 	btree := bplus.NewBPlusTree(pager, cache, bytes.Compare)
 
 	return btree, nil
+}
+
+/*
+
+ ********************************* PRINTING TABLE *********************************
+
+
+ */
+
+func (vm *VM) PrintTableHeader(columns []ColumnDef) {
+	for i, col := range columns {
+		fmt.Printf("%-20s", col.Name)
+		if i < len(columns)-1 {
+			fmt.Print("| ")
+		}
+	}
+	fmt.Println()
+	fmt.Println(strings.Repeat("-", 22*len(columns)))
+}
+
+// PrintTableRow prints a single row in formatted style with consistent width
+func (vm *VM) PrintTableRow(rowValues []any, columns []ColumnDef) {
+	for i := range columns {
+		val := rowValues[i]
+
+		// Convert any type to readable string safely
+		str := fmt.Sprintf("%v", val)
+
+		// FIXED: Print with consistent width (20 chars like header)
+		fmt.Printf("%-20s", str)
+
+		// Separator except for last column
+		if i < len(columns)-1 {
+			fmt.Print("| ")
+		}
+	}
+	fmt.Println()
 }

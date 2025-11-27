@@ -87,17 +87,20 @@ func NewVM(tree *bplus.BPlusTree, heapFileManager *heapfile.HeapFileManager) *VM
 }
 
 func (vm *VM) Execute(instructions []Instruction) error {
+
+	vm.stack = nil
+
 	for _, instr := range instructions {
-		fmt.Printf("%v --> %v\n", instr.Op, instr.Value)
+		// fmt.Printf("%v --> %v\n", instr.Op, instr.Value)
 		switch instr.Op {
 		case OP_PUSH_VAL:
 			// Push value onto stack
 			vm.stack = append(vm.stack, []byte(instr.Value))
-			fmt.Printf("  Pushed value: %s (stack size: %d)\n", instr.Value, len(vm.stack))
+			// fmt.Printf("Pushed value: %s (stack size: %d)\n", instr.Value, len(vm.stack))
 
 		case OP_PUSH_KEY:
 			vm.stack = append(vm.stack, []byte(instr.Value))
-			fmt.Printf("  Pushed key: %s\n", instr.Value)
+			// fmt.Printf("Pushed key: %s\n", instr.Value)
 
 		case OP_CREATE_DB:
 			return vm.ExecuteCreateDatabase(instr.Value)
@@ -243,7 +246,6 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 		if len(colItr) != 2 {
 			return fmt.Errorf("invalid column format: %s", col)
 		}
-		fmt.Printf("name: %s", colItr[1])
 		columnDefs = append(columnDefs, ColumnDef{Name: colItr[1], Type: colItr[0]})
 	}
 
@@ -263,7 +265,6 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 	// also writing to disk should be atomic, this write can be half done if a power loss occurs in the process
 	// TODO: two phase commit protocol + journaling (Redo and Undo logging) will make the writes more secure
 
-	fmt.Printf("the schema to be writtern is: %s:%s\n", schema.TableName, schema.Columns)
 	schemaJson, _ := json.MarshalIndent(schema, "", "  ")
 	fmt.Println(string(schemaJson))
 	if err := os.WriteFile(schemaPath, schemaJson, 0644); err != nil {
@@ -283,6 +284,8 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 	if err := vm.SaveTableFileMapping(); err != nil {
 		return fmt.Errorf("failed to save table-fileID mapping: %w", err)
 	}
+
+	vm.LoadTableFileMapping() // loading the mapping for just created table
 
 	fmt.Printf("Table %s created successfully\n", tableName)
 
@@ -322,9 +325,16 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 		}
 	}
 
+	if len(vm.stack) < len(schema.Columns) {
+		return fmt.Errorf("table schema doesnt match the given query")
+	}
+
 	// take all the values that are given in the query
 	values := make([]any, len(schema.Columns))
 	for i := len(schema.Columns) - 1; i >= 0; i-- {
+		if len(vm.stack) == 0 {
+			return fmt.Errorf("stack underflow at column %d", i)
+		}
 		v := vm.stack[len(vm.stack)-1]
 		vm.stack = vm.stack[:len(vm.stack)-1]
 		values[i] = v
@@ -335,7 +345,7 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 			len(columnNames), len(values))
 	}
 
-	fmt.Println("Schema columns:", schema.Columns)
+	// fmt.Println("Schema columns:", schema.Columns)
 
 	/*
 
@@ -344,21 +354,21 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 	*/
 
 	row, err := vm.SerializeRow(columnNames, values)
-	fmt.Print("the row after serailization is: ", row)
+	// fmt.Print("the row after serailization is: ", row)
 
 	if err != nil {
 		return err
 	}
 
-	fmt.Print("file Id: ", fileID)
-	fmt.Print("row:  ", string(row))
+	// fmt.Print("file Id: ", fileID)
+	// fmt.Print("row:  ", string(row))
 
 	rowPtr, err := vm.heapfileManager.InsertRow(fileID, row)
 	if err != nil {
 		return fmt.Errorf("heap insert failed: %w", err)
 	}
 
-	fmt.Printf("✓ Inserted into heap (File:%d, Page:%d)\n", rowPtr.FileID, rowPtr.PageNumber)
+	// fmt.Printf("Inserted into heap (File:%d, Page:%d)\n", rowPtr.FileID, rowPtr.PageNumber)
 
 	/*
 
@@ -366,7 +376,7 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 
 	*/
 
-	primaryKeyBytes, pkColumnName, err := vm.ExtractPrimaryKey(schema, values, rowPtr)
+	primaryKeyBytes, _, err := vm.ExtractPrimaryKey(schema, values, rowPtr)
 	if err != nil {
 		return fmt.Errorf("failed to extract primary key: %w", err)
 	}
@@ -383,12 +393,67 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 	// B+ tree insertion - B+ TREE'S PAGER WRITES TO DISK, NOT VM
 	btree.Insertion(primaryKeyBytes, rowPtrBytes)
 
-	fmt.Printf("Indexed in B+ tree (key_column: %s)\n", pkColumnName)
+	// fmt.Printf("Indexed in B+ tree (key_column: %s)\n", pkColumnName)
 
 	return nil
 }
 
-func (vm *VM) ExecuteSelect(cols string) error {
-	// to be decided
+func (vm *VM) ExecuteSelect(tableName string) error {
+	if vm.currDb == "" {
+		return fmt.Errorf("no database selected. Run: USE <dbname>")
+	}
+
+	// fmt.Printf("SELECT %s ", vm.stack)
+	// fmt.Println("FROM", tableName)
+
+	schemaPath := filepath.Join(DB_ROOT, vm.currDb, "tables", tableName+"_schema.json")
+	data, err := os.ReadFile(schemaPath)
+	if err != nil {
+		return fmt.Errorf("table not found: %s", tableName)
+	}
+
+	var schema TableSchema
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return fmt.Errorf("invalid schema: %w", err)
+	}
+
+	fileID, ok := vm.tableToFileId[tableName]
+	if !ok {
+		return fmt.Errorf("table '%s' not found", tableName)
+	}
+
+	// fmt.Print("fileID: ", fileID)
+
+	heapFile, err := vm.heapfileManager.GetHeapFileByID(fileID)
+	if err != nil {
+		return err
+	}
+	rowPtrs := heapFile.GetAllRowPointers()
+	if len(rowPtrs) == 0 {
+		fmt.Println("table is empty")
+		return nil
+	}
+
+	// fmt.Printf("scanning %d rows...\n", len(rowPtrs))
+
+	fmt.Printf("\n\n                Table: %s\n\n", tableName)
+	vm.PrintTableHeader(schema.Columns)
+
+	for _, ptr := range rowPtrs {
+		rowBytes, err := vm.heapfileManager.GetRow(ptr)
+		if err != nil {
+			fmt.Println("error reading row:", err)
+			continue
+		}
+
+		rowValues, err := vm.DeserializeRow(rowBytes, schema.Columns)
+		if err != nil {
+			fmt.Println("error deserializing row:", err)
+			continue
+		}
+
+		vm.PrintTableRow(rowValues, schema.Columns)
+	}
+
 	return nil
 }

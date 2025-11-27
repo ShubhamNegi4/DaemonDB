@@ -77,8 +77,13 @@ func EmitBytecode(stmt parser.Statement) []executor.Instruction {
 		fmt.Printf("  values: %s", cols)
 		// Execute select
 		instructions = append(instructions, executor.Instruction{
-			Op:    executor.OP_SELECT,
+			Op:    executor.OP_PUSH_VAL,
 			Value: cols,
+		})
+
+		instructions = append(instructions, executor.Instruction{
+			Op:    executor.OP_SELECT,
+			Value: s.Table,
 		})
 
 	default:

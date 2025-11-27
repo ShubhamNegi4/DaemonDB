@@ -1,7 +1,7 @@
 package heapfile
 
 import (
-	bplus "DaemonDB/bplustree"
+	"os"
 	"sync"
 )
 
@@ -39,8 +39,8 @@ type RowPointer struct {
 
 // HeapFile represents a single heap file on disk
 type HeapFile struct {
-	fileID   uint32      // which file it is
-	pager    bplus.Pager // pager for disk I/O
+	fileID   uint32 // which file it is
+	pager    *HeapFilePager
 	filePath string
 	mu       sync.RWMutex
 }
@@ -50,4 +50,12 @@ type HeapFileManager struct {
 	baseDir string
 	files   map[uint32]*HeapFile
 	mu      sync.RWMutex
+}
+
+type HeapFilePager struct {
+	file     *os.File
+	filePath string
+	pageSize int
+	nextPage int64
+	mu       sync.RWMutex
 }

@@ -106,7 +106,7 @@ func (p *Parser) parseCreateTable() *CreateTableStmt {
 	table := p.curToken.Value
 	p.nextToken()
 
-	p.expect(lex.OPENCURLY)
+	p.expect(lex.OPENROUNDED)
 	p.nextToken()
 
 	cols := []ColumnDef{}
@@ -124,7 +124,7 @@ func (p *Parser) parseCreateTable() *CreateTableStmt {
 		}
 	}
 
-	p.expect(lex.CLOSECURLY)
+	p.expect(lex.CLOSEDROUNDED)
 	p.nextToken()
 
 	return &CreateTableStmt{TableName: table, Columns: cols}

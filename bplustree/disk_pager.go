@@ -174,3 +174,9 @@ func (p *OnDiskPager) Close() error {
 	p.file = nil // Mark as closed
 	return err
 }
+
+func (p *OnDiskPager) TotalPages() int64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.nextPage // if next is 20, meaning 19 pages are full
+}
