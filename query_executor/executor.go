@@ -398,61 +398,84 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 	return nil
 }
 
-func (vm *VM) ExecuteSelect(tableName string) error {
-	if vm.currDb == "" {
-		return fmt.Errorf("no database selected. Run: USE <dbname>")
-	}
-
-	// fmt.Printf("SELECT %s ", vm.stack)
-	// fmt.Println("FROM", tableName)
-
-	schemaPath := filepath.Join(DB_ROOT, vm.currDb, "tables", tableName+"_schema.json")
-	data, err := os.ReadFile(schemaPath)
-	if err != nil {
-		return fmt.Errorf("table not found: %s", tableName)
-	}
-
-	var schema TableSchema
-	if err := json.Unmarshal(data, &schema); err != nil {
-		return fmt.Errorf("invalid schema: %w", err)
+// ExecuteSelect performs a SELECT on a table. It currently supports "SELECT * FROM <table>"
+// The argument 'arg' is taken from the instruction.Value (CodeGen may pass either cols or table name).
+func (vm *VM) ExecuteSelect(arg string) error {
+	// Determine tableName
+	var tableName string
+	if _, ok := vm.tableToFileId[arg]; ok {
+		tableName = arg
+	} else if len(vm.tableToFileId) == 1 {
+		for t := range vm.tableToFileId {
+			tableName = t
+		}
+	} else {
+		return fmt.Errorf("cannot infer table name; provide table name in SELECT bytecode")
 	}
 
 	fileID, ok := vm.tableToFileId[tableName]
 	if !ok {
-		return fmt.Errorf("table '%s' not found", tableName)
+		return fmt.Errorf("table '%s' not found in current DB", tableName)
 	}
 
-	// fmt.Print("fileID: ", fileID)
-
-	heapFile, err := vm.heapfileManager.GetHeapFileByID(fileID)
+	// Get HeapFile handle
+	hf, err := vm.heapfileManager.GetHeapFileByID(fileID)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get heapfile: %w", err)
 	}
-	rowPtrs := heapFile.GetAllRowPointers()
+
+	// Get all RowPointers
+	rowPtrs := hf.GetAllRowPointers()
 	if len(rowPtrs) == 0 {
 		fmt.Println("table is empty")
 		return nil
 	}
 
-	// fmt.Printf("scanning %d rows...\n", len(rowPtrs))
+	// Read schema for deserialization
+	schemaPath := filepath.Join(DB_ROOT, vm.currDb, "tables", tableName+"_schema.json")
+	data, err := os.ReadFile(schemaPath)
+	if err != nil {
+		return fmt.Errorf("failed to read schema for %s: %w", tableName, err)
+	}
+	var schema TableSchema
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return fmt.Errorf("invalid schema for %s: %w", tableName, err)
+	}
 
-	fmt.Printf("\n\n                Table: %s\n\n", tableName)
-	vm.PrintTableHeader(schema.Columns)
+	// Print header
+	colNames := make([]string, 0, len(schema.Columns))
+	for _, c := range schema.Columns {
+		colNames = append(colNames, c.Name)
+	}
+	fmt.Println(strings.Join(colNames, " | "))
 
-	for _, ptr := range rowPtrs {
-		rowBytes, err := vm.heapfileManager.GetRow(ptr)
+	// Iterate and print each row using centralized deserializer
+	for _, rp := range rowPtrs {
+		raw, err := vm.heapfileManager.GetRow(rp)
 		if err != nil {
-			fmt.Println("error reading row:", err)
+			fmt.Printf("error reading row (Page %d Slot %d): %v\n", rp.PageNumber, rp.SlotIndex, err)
 			continue
 		}
 
-		rowValues, err := vm.DeserializeRow(rowBytes, schema.Columns)
+		values, err := vm.DeserializeRow(raw, schema.Columns)
 		if err != nil {
-			fmt.Println("error deserializing row:", err)
+			fmt.Printf("error deserializing row (Page %d Slot %d): %v\n", rp.PageNumber, rp.SlotIndex, err)
 			continue
 		}
 
-		vm.PrintTableRow(rowValues, schema.Columns)
+		// Convert values to strings for printing
+		strs := make([]string, len(values))
+		for i, v := range values {
+			s, err := toString(v)
+			if err != nil {
+				// fallback to fmt if toString cannot convert
+				strs[i] = fmt.Sprintf("%v", v)
+			} else {
+				strs[i] = s
+			}
+		}
+
+		fmt.Println(strings.Join(strs, " | "))
 	}
 
 	return nil

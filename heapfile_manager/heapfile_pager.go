@@ -97,6 +97,11 @@ func (p *HeapFilePager) WritePage(pageID int64, data []byte) error {
 		return fmt.Errorf("failed to write page %d: %w", pageID, err)
 	}
 
+	// **CRITICAL:** update nextPage so TotalPages() reflects newly created pages
+	if pageID >= p.nextPage {
+		p.nextPage = pageID + 1
+	}
+
 	return nil
 }
 
