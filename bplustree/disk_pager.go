@@ -1,6 +1,7 @@
 package bplus
 
 import (
+	"encoding/binary"
 	"fmt"
 	"os"
 	"sync"
@@ -36,6 +37,12 @@ func NewOnDiskPager(indexPath string) (*OnDiskPager, error) {
 
 	// If file is empty, nextPageID should be 1 (page 0 is reserved for metadata if needed)
 	if numPages == 0 {
+		// initialize metadata page 0 with zeros
+		zero := make([]byte, PageSize)
+		if _, err := file.WriteAt(zero, 0); err != nil {
+			file.Close()
+			return nil, fmt.Errorf("failed to init metadata page: %w", err)
+		}
 		nextPageID = 1
 	}
 
@@ -179,4 +186,21 @@ func (p *OnDiskPager) TotalPages() int64 {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return p.nextPage // if next is 20, meaning 19 pages are full
+}
+
+// WriteRoot stores the root page id in metadata page 0.
+func (p *OnDiskPager) WriteRoot(rootID int64) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.file == nil {
+		return fmt.Errorf("pager file is closed")
+	}
+
+	meta := make([]byte, PageSize)
+	binary.LittleEndian.PutUint64(meta[0:8], uint64(rootID))
+	if _, err := p.file.WriteAt(meta, 0); err != nil {
+		return fmt.Errorf("failed to write root metadata: %w", err)
+	}
+	return nil
 }

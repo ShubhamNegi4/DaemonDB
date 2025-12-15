@@ -307,7 +307,7 @@ go run main.go
 Then enter SQL queries:
 ```sql
 CREATE TABLE students {
-    id string,
+    id int primary key,
     name string,
     age int,
     grade string
@@ -315,6 +315,9 @@ CREATE TABLE students {
 
 INSERT INTO students VALUES ("S001", "Alice", 20, "A")
 INSERT INTO students VALUES ("S002", "Bob", 21, "B")
+
+-- Point lookup uses the B+ tree on the declared primary key
+SELECT * FROM students WHERE id = "S002"
 ```
 
 ### 2. Test Heap File System
@@ -347,11 +350,11 @@ go run bplus.go
 | **Heap File Operations** | ✅ Complete | Insert, GetRow (Delete/Update TODO) |
 | **SQL Parser** | ✅ Complete | Lexer and parser for DDL/DML |
 | **Code Generator** | ✅ Complete | AST to bytecode conversion |
-| **Query Executor** | 🚧 Partial | INSERT/CREATE TABLE working, SELECT/UPDATE/DELETE TODO |
+| **Query Executor** | 🚧 Partial | INSERT/CREATE TABLE working, SELECT uses PK index; UPDATE/DELETE TODO |
 | **Concurrency** | ✅ Complete | Thread-safe operations |
-| **File Persistence** | 🚧 Partial | Heap files on disk, B+ tree in-memory |
-| **Buffer Pool** | 📋 Planned | Full buffer pool API (Get/Put/Pin/Unpin) |
-| **Node Serialization** | 📋 Planned | Encode/decode nodes to pages |
+| **File Persistence** | 🚧 Partial | Heap files on disk, B+ tree index pages on disk (root persisted) |
+| **Buffer Pool** | ✅ Complete | LRU cache with pin/unpin, dirty tracking |
+| **Node Serialization** | ✅ Complete | Encode/decode nodes to pages |
 
 ## Data Flow Example
 
@@ -368,10 +371,9 @@ go run bplus.go
    a. SerializeRow() → Convert values to bytes
    b. HeapFileManager.InsertRow() → Write to heap file
       → Returns: RowPointer(FileID=1, PageNumber=0, SlotIndex=3)
-   c. SerializeRowPointer() → Convert to 8 bytes
-   d. ExtractPrimaryKey() → "S001"
-   e. B+ Tree.Insertion("S001", RowPointerBytes)
-      → Stores index: "S001" → RowPointer
+   c. SerializeRowPointer() → Convert to 10 bytes (FileID, PageNumber, SlotIndex)
+   d. ExtractPrimaryKey() → declared PK if present, otherwise implicit rowid
+   e. B+ Tree.Insertion(PK, RowPointerBytes) → Stores index: PK → RowPointer
 ```
 
 ### SELECT Operation (Conceptual)
@@ -384,13 +386,13 @@ go run bplus.go
 3. Code Generator: AST → Bytecode
    ↓
 4. VM.Execute():
-   a. B+ Tree.Search("S001")
+   a. B+ Tree.Search("S001") (only when WHERE is on the primary key)
       → Returns: RowPointer bytes
    b. DeserializeRowPointer() → RowPointer(1, 0, 3)
    c. HeapFileManager.GetRow(RowPointer)
       → Reads page 0, slot 3 → Returns row data
    d. DeserializeRow() → Convert bytes to values
-   e. Return result to user
+   e. Return result to user (SELECT without WHERE still does a full scan)
 ```
 
 ## Performance Characteristics
@@ -429,12 +431,8 @@ go test -v -run TestSlotDirectory
 
 ## Future Work
 
-- [ ] Implement SELECT execution
 - [ ] Implement UPDATE/DELETE operations in heap files
-- [ ] Add buffer pool API (Get/Put/Pin/Unpin with eviction)
-- [ ] Implement node serialization for B+ tree persistence
-- [ ] Add file-backed pager for B+ tree
-- [ ] Implement WHERE clause filtering
+- [ ] Add secondary indexes and non-PK WHERE filtering
 - [ ] Add transaction support
 - [ ] Implement WAL (Write-Ahead Logging) for durability
 

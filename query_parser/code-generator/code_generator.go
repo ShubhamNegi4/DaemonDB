@@ -3,6 +3,7 @@ package codegen
 import (
 	executor "DaemonDB/query_executor"
 	"DaemonDB/query_parser/parser"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -39,7 +40,11 @@ func EmitBytecode(stmt parser.Statement) []executor.Instruction {
 		// this cols will actually store the schema of the table
 		cols := []string{}
 		for _, col := range s.Columns {
-			cols = append(cols, col.Type+":"+col.Name) // sepreate int:id
+			segment := col.Type + ":" + col.Name
+			if col.IsPrimaryKey {
+				segment += ":pk"
+			}
+			cols = append(cols, segment) // sepreate int:id
 		}
 		// join all the cols into a string, to get the schema of the table
 		instructions = append(instructions, executor.Instruction{
@@ -75,6 +80,19 @@ func EmitBytecode(stmt parser.Statement) []executor.Instruction {
 			cols = strings.Join(s.Columns, ",") // get columns (comma seperated)
 		}
 		fmt.Printf("  values: %s", cols)
+		whereCol := s.WhereCol
+		whereVal := s.WhereValue
+		// package select metadata as JSON for executor
+		payload := struct {
+			Table    string `json:"table"`
+			WhereCol string `json:"where_col,omitempty"`
+			WhereVal string `json:"where_val,omitempty"`
+		}{
+			Table:    s.Table,
+			WhereCol: whereCol,
+			WhereVal: whereVal,
+		}
+		payloadJSON, _ := json.Marshal(payload)
 		// Execute select
 		instructions = append(instructions, executor.Instruction{
 			Op:    executor.OP_PUSH_VAL,
@@ -83,7 +101,7 @@ func EmitBytecode(stmt parser.Statement) []executor.Instruction {
 
 		instructions = append(instructions, executor.Instruction{
 			Op:    executor.OP_SELECT,
-			Value: s.Table,
+			Value: string(payloadJSON),
 		})
 
 	default:

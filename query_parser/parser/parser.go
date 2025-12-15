@@ -115,7 +115,18 @@ func (p *Parser) parseCreateTable() *CreateTableStmt {
 		p.nextToken()
 		typ := p.curToken.Value
 		p.nextToken()
-		cols = append(cols, ColumnDef{Name: name, Type: typ})
+
+		isPK := false
+		// optional "primary key"
+		if p.curToken.Kind == lex.IDENT && strings.EqualFold(p.curToken.Value, "primary") {
+			p.nextToken()
+			if p.curToken.Kind == lex.IDENT && strings.EqualFold(p.curToken.Value, "key") {
+				isPK = true
+				p.nextToken()
+			}
+		}
+
+		cols = append(cols, ColumnDef{Name: name, Type: typ, IsPrimaryKey: isPK})
 
 		if p.curToken.Kind == lex.COMMA {
 			p.nextToken()
@@ -155,7 +166,18 @@ func (p *Parser) parseSelect() *SelectStmt {
 	table := p.curToken.Value
 	p.nextToken()
 
-	return &SelectStmt{Columns: cols, Table: table}
+	var whereCol, whereVal string
+	if p.curToken.Kind == lex.WHERE {
+		p.nextToken()
+		whereCol = p.curToken.Value
+		p.nextToken()
+		p.expect(lex.EQUAL)
+		p.nextToken()
+		whereVal = p.curToken.Value
+		p.nextToken()
+	}
+
+	return &SelectStmt{Columns: cols, Table: table, WhereCol: whereCol, WhereValue: whereVal}
 }
 
 // --- INSERT ---

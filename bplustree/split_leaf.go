@@ -26,7 +26,9 @@ func (t *BPlusTree) SplitLeaf(leaf *Node) {
 		leaf.parent = newRoot.id
 		newLeaf.parent = newRoot.id
 		t.root = newRoot.id
-		t.cache.pages[newRoot.id] = newRoot
+		t.cache.Put(newRoot)
+		t.cache.MarkDirty(newRoot.id)
+		t.saveRoot()
 	} else {
 		// insert promoted key into parent (recursive case)
 		newLeaf.parent = leaf.parent
@@ -35,6 +37,8 @@ func (t *BPlusTree) SplitLeaf(leaf *Node) {
 	}
 
 	// Add new leaf to cache
-	t.cache.pages[newLeaf.id] = newLeaf
+	t.cache.Put(newLeaf)
+	t.cache.MarkDirty(newLeaf.id)
+	t.cache.MarkDirty(leaf.id)
 
 }

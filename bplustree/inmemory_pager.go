@@ -9,7 +9,7 @@ type InMemoryPager struct {
 	pages    map[int64][]byte
 	nextPage int64
 	mu       sync.RWMutex
-	closed   bool 
+	closed   bool
 }
 
 func NewInMemoryPager() *InMemoryPager {
@@ -111,4 +111,10 @@ func (p *InMemoryPager) Close() error {
 	p.closed = true
 
 	return nil
+}
+
+func (p *InMemoryPager) TotalPages() int64 {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.nextPage
 }

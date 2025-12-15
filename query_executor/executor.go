@@ -243,10 +243,15 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 	columnDefs := make([]ColumnDef, 0, len(cols))
 	for _, col := range cols {
 		colItr := strings.Split(col, ":")
-		if len(colItr) != 2 {
+		if len(colItr) < 2 {
 			return fmt.Errorf("invalid column format: %s", col)
 		}
-		columnDefs = append(columnDefs, ColumnDef{Name: colItr[1], Type: colItr[0]})
+		isPK := len(colItr) >= 3 && strings.EqualFold(colItr[2], "pk")
+		colType := strings.ToUpper(colItr[0])
+		if colType == "STRING" {
+			colType = "VARCHAR"
+		}
+		columnDefs = append(columnDefs, ColumnDef{Name: colItr[1], Type: colType, IsPrimaryKey: isPK})
 	}
 
 	schema := TableSchema{
@@ -401,16 +406,19 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 // ExecuteSelect performs a SELECT on a table. It currently supports "SELECT * FROM <table>"
 // The argument 'arg' is taken from the instruction.Value (CodeGen may pass either cols or table name).
 func (vm *VM) ExecuteSelect(arg string) error {
-	// Determine tableName
-	var tableName string
-	if _, ok := vm.tableToFileId[arg]; ok {
-		tableName = arg
-	} else if len(vm.tableToFileId) == 1 {
-		for t := range vm.tableToFileId {
-			tableName = t
-		}
-	} else {
-		return fmt.Errorf("cannot infer table name; provide table name in SELECT bytecode")
+	// Decode select payload (table + optional WHERE)
+	var payload struct {
+		Table    string `json:"table"`
+		WhereCol string `json:"where_col"`
+		WhereVal string `json:"where_val"`
+	}
+	if err := json.Unmarshal([]byte(arg), &payload); err != nil {
+		return fmt.Errorf("invalid select payload: %w", err)
+	}
+
+	tableName := payload.Table
+	if tableName == "" {
+		return fmt.Errorf("table name missing in SELECT payload")
 	}
 
 	fileID, ok := vm.tableToFileId[tableName]
@@ -422,13 +430,6 @@ func (vm *VM) ExecuteSelect(arg string) error {
 	hf, err := vm.heapfileManager.GetHeapFileByID(fileID)
 	if err != nil {
 		return fmt.Errorf("failed to get heapfile: %w", err)
-	}
-
-	// Get all RowPointers
-	rowPtrs := hf.GetAllRowPointers()
-	if len(rowPtrs) == 0 {
-		fmt.Println("table is empty")
-		return nil
 	}
 
 	// Read schema for deserialization
@@ -448,6 +449,69 @@ func (vm *VM) ExecuteSelect(arg string) error {
 		colNames = append(colNames, c.Name)
 	}
 	fmt.Println(strings.Join(colNames, " | "))
+
+	// If WHERE on PK provided, use index lookup
+	if payload.WhereCol != "" {
+		pkColIdx := -1
+		var pkCol ColumnDef
+		for i, c := range schema.Columns {
+			if strings.EqualFold(c.Name, payload.WhereCol) && c.IsPrimaryKey {
+				pkColIdx = i
+				pkCol = c
+				break
+			}
+		}
+		if pkColIdx == -1 {
+			return fmt.Errorf("WHERE column %s is not a primary key", payload.WhereCol)
+		}
+		pkBytes, err := ValueToBytes([]byte(payload.WhereVal), pkCol.Type)
+		if err != nil {
+			return fmt.Errorf("failed to encode WHERE value: %w", err)
+		}
+
+		btree, err := vm.GetOrCreateIndex(tableName)
+		if err != nil {
+			return fmt.Errorf("failed to get index: %w", err)
+		}
+		rowPtrBytes, err := btree.Search(pkBytes)
+		if err != nil {
+			return fmt.Errorf("index search failed: %w", err)
+		}
+		if rowPtrBytes == nil {
+			fmt.Println("no rows matched")
+			return nil
+		}
+		rowPtr, err := vm.DeserializeRowPointer(rowPtrBytes)
+		if err != nil {
+			return fmt.Errorf("failed to decode row pointer: %w", err)
+		}
+		raw, err := vm.heapfileManager.GetRow(rowPtr)
+		if err != nil {
+			return fmt.Errorf("error reading row (Page %d Slot %d): %w", rowPtr.PageNumber, rowPtr.SlotIndex, err)
+		}
+		values, err := vm.DeserializeRow(raw, schema.Columns)
+		if err != nil {
+			return fmt.Errorf("error deserializing row (Page %d Slot %d): %w", rowPtr.PageNumber, rowPtr.SlotIndex, err)
+		}
+		strs := make([]string, len(values))
+		for i, v := range values {
+			s, err := toString(v)
+			if err != nil {
+				strs[i] = fmt.Sprintf("%v", v)
+			} else {
+				strs[i] = s
+			}
+		}
+		fmt.Println(strings.Join(strs, " | "))
+		return nil
+	}
+
+	// No WHERE: full scan
+	rowPtrs := hf.GetAllRowPointers()
+	if len(rowPtrs) == 0 {
+		fmt.Println("table is empty")
+		return nil
+	}
 
 	// Iterate and print each row using centralized deserializer
 	for _, rp := range rowPtrs {

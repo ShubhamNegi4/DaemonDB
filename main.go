@@ -19,8 +19,8 @@ import (
 
 func main() {
 
-	// Initialize B+ Tree
-	pager, _ := bplus.NewOnDiskPager("")
+	// Initialize B+ Tree with in-memory pager; table-specific on-disk indexes are opened per-table via GetOrCreateIndex
+	pager := bplus.NewInMemoryPager()
 	cache := bplus.NewBufferPool(10)
 	tree := bplus.NewBPlusTree(pager, cache, bytes.Compare)
 

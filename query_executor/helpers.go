@@ -224,10 +224,22 @@ func (vm *VM) DeserializeRow(row []byte, cols []ColumnDef) ([]any, error) {
 }
 
 func (vm *VM) SerializeRowPointer(ptr *heapfile.RowPointer) []byte {
-	buf := make([]byte, 8) // FileID(4) + PageNumber(4)
+	buf := make([]byte, 10) // FileID(4) + PageNumber(4) + SlotIndex(2)
 	binary.LittleEndian.PutUint32(buf[0:4], ptr.FileID)
 	binary.LittleEndian.PutUint32(buf[4:8], ptr.PageNumber)
+	binary.LittleEndian.PutUint16(buf[8:10], ptr.SlotIndex)
 	return buf
+}
+
+func (vm *VM) DeserializeRowPointer(b []byte) (*heapfile.RowPointer, error) {
+	if len(b) < 10 {
+		return nil, fmt.Errorf("row pointer buffer too short: %d", len(b))
+	}
+	return &heapfile.RowPointer{
+		FileID:     binary.LittleEndian.Uint32(b[0:4]),
+		PageNumber: binary.LittleEndian.Uint32(b[4:8]),
+		SlotIndex:  binary.LittleEndian.Uint16(b[8:10]),
+	}, nil
 }
 
 /*

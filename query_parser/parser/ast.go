@@ -19,8 +19,10 @@ type UseDatabaseStatement struct {
 
 // SELECT statement
 type SelectStmt struct {
-	Columns []string
-	Table   string
+	Columns    []string
+	Table      string
+	WhereCol   string
+	WhereValue string
 }
 
 // CREATE TABLE statement

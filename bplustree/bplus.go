@@ -23,7 +23,7 @@ func Bplus() {
 	// 	// Create a simple record: "name|grade"
 	// 	record := student.name + "|" + student.grade
 	// 	tree.Insertion([]byte(student.id), []byte(record))
-	// 	fmt.Printf("Inserted: %s -> %s\n", student.id, record)
+	// 	fmt.Printf("Inserted: %s -> %s\n", student.id, record)lk
 	// }
 
 	// fmt.Println("\n=== Searching Students ===")

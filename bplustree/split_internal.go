@@ -18,8 +18,9 @@ func (t *BPlusTree) SplitInternal(node *Node) {
 
 	// update parent pointers for children moved to right
 	for _, cid := range right.children {
-		if c := t.cache.pages[cid]; c != nil {
+		if c, _ := t.cache.Get(cid); c != nil {
 			c.parent = right.id
+			t.cache.MarkDirty(c.id)
 		}
 	}
 
@@ -32,7 +33,8 @@ func (t *BPlusTree) SplitInternal(node *Node) {
 	right.parent = node.parent
 
 	// write right to cache
-	t.cache.pages[right.id] = right
+	t.cache.Put(right)
+	t.cache.MarkDirty(right.id)
 
 	if node.id == t.root {
 		// create new root
@@ -44,7 +46,11 @@ func (t *BPlusTree) SplitInternal(node *Node) {
 		node.parent = newRoot.id
 		right.parent = newRoot.id
 		t.root = newRoot.id
-		t.cache.pages[newRoot.id] = newRoot
+		t.cache.Put(newRoot)
+		t.cache.MarkDirty(newRoot.id)
+		t.cache.MarkDirty(node.id)
+		t.cache.MarkDirty(right.id)
+		t.saveRoot()
 		return
 	}
 

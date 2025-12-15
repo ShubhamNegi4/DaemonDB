@@ -3,7 +3,7 @@ package bplus
 // insertIntoParent inserts sepKey and rightId into the parent of leftId.
 // If the parent overflows, it splits and propagates upward.
 func (t *BPlusTree) insertIntoParent(parentId int64, leftId int64, sepKey []byte, rightId int64) {
-	parent := t.cache.pages[parentId]
+	parent, _ := t.cache.Get(parentId)
 	if parent == nil {
 		return
 	}
@@ -29,8 +29,9 @@ func (t *BPlusTree) insertIntoParent(parentId int64, leftId int64, sepKey []byte
 	parent.numKeys = int16(len(parent.key))
 
 	// set right child's parent
-	if rc := t.cache.pages[rightId]; rc != nil {
+	if rc, _ := t.cache.Get(rightId); rc != nil {
 		rc.parent = parent.id
+		t.cache.MarkDirty(rc.id)
 	}
 
 	// if overflow, split internal and propagate
@@ -38,6 +39,5 @@ func (t *BPlusTree) insertIntoParent(parentId int64, leftId int64, sepKey []byte
 		t.SplitInternal(parent)
 	}
 
-	// update cache
-	t.cache.pages[parent.id] = parent
+	t.cache.MarkDirty(parent.id)
 }
