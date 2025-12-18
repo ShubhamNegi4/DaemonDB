@@ -27,14 +27,22 @@ type SelectStmt struct {
 
 // CREATE TABLE statement
 type CreateTableStmt struct {
-	TableName string
-	Columns   []ColumnDef
+	TableName   string
+	Columns     []ColumnDef
+	ForeignKeys []ForeignKeyDef
 }
 
 type ColumnDef struct {
 	Name         string `json:"name"`
 	Type         string `json:"type"`
 	IsPrimaryKey bool   `json:"is_primary_key"`
+}
+
+//For foreign key
+type ForeignKeyDef struct {
+	Column    string `json:"column"`     // child column
+	RefTable  string `json:"ref_table"`  // parent table
+	RefColumn string `json:"ref_column"` // parent PK column
 }
 
 // INSERT statement

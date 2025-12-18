@@ -100,9 +100,10 @@ func (p *Parser) parseUseDatabase() *UseDatabaseStatement {
 }
 
 // --- CREATE TABLE ---
+// --- CREATE TABLE ---
 func (p *Parser) parseCreateTable() *CreateTableStmt {
-	p.nextToken() // curToken is <tablename>
 
+	p.nextToken() // curToken is <tablename>
 	table := p.curToken.Value
 	p.nextToken()
 
@@ -110,35 +111,104 @@ func (p *Parser) parseCreateTable() *CreateTableStmt {
 	p.nextToken()
 
 	cols := []ColumnDef{}
-	for p.curToken.Kind == lex.IDENT {
+	fks := []ForeignKeyDef{}
+
+	for p.curToken.Kind != lex.CLOSEDROUNDED {
+
+		// ================= FOREIGN KEY =================
+		if p.curToken.Kind == lex.IDENT &&
+			strings.EqualFold(p.curToken.Value, "foreign") {
+
+			p.nextToken() // FOREIGN
+
+			if !(p.curToken.Kind == lex.IDENT &&
+				strings.EqualFold(p.curToken.Value, "key")) {
+				panic("expected KEY after FOREIGN")
+			}
+			p.nextToken() // KEY
+
+			p.expect(lex.OPENROUNDED)
+			p.nextToken()
+
+			fkColumn := p.curToken.Value
+			p.expect(lex.IDENT)
+			p.nextToken()
+
+			p.expect(lex.CLOSEDROUNDED)
+			p.nextToken()
+
+			if !(p.curToken.Kind == lex.IDENT &&
+				strings.EqualFold(p.curToken.Value, "references")) {
+				panic("expected REFERENCES in foreign key")
+			}
+			p.nextToken()
+
+			refTable := p.curToken.Value
+			p.expect(lex.IDENT)
+			p.nextToken()
+
+			p.expect(lex.OPENROUNDED)
+			p.nextToken()
+
+			refColumn := p.curToken.Value
+			p.expect(lex.IDENT)
+			p.nextToken()
+
+			p.expect(lex.CLOSEDROUNDED)
+			p.nextToken()
+
+			fks = append(fks, ForeignKeyDef{
+				Column:    fkColumn,
+				RefTable:  refTable,
+				RefColumn: refColumn,
+			})
+
+			if p.curToken.Kind == lex.COMMA {
+				p.nextToken()
+			}
+			continue
+		}
+
+		// ================= COLUMN =================
 		name := p.curToken.Value
+		p.expect(lex.IDENT)
 		p.nextToken()
+
 		typ := p.curToken.Value
+		p.expect(lex.IDENT)
 		p.nextToken()
 
 		isPK := false
-		// optional "primary key"
-		if p.curToken.Kind == lex.IDENT && strings.EqualFold(p.curToken.Value, "primary") {
+		if p.curToken.Kind == lex.IDENT &&
+			strings.EqualFold(p.curToken.Value, "primary") {
+
 			p.nextToken()
-			if p.curToken.Kind == lex.IDENT && strings.EqualFold(p.curToken.Value, "key") {
+			if p.curToken.Kind == lex.IDENT &&
+				strings.EqualFold(p.curToken.Value, "key") {
 				isPK = true
 				p.nextToken()
 			}
 		}
 
-		cols = append(cols, ColumnDef{Name: name, Type: typ, IsPrimaryKey: isPK})
+		cols = append(cols, ColumnDef{
+			Name:         name,
+			Type:         typ,
+			IsPrimaryKey: isPK,
+		})
 
 		if p.curToken.Kind == lex.COMMA {
 			p.nextToken()
-		} else {
-			break
 		}
 	}
 
 	p.expect(lex.CLOSEDROUNDED)
 	p.nextToken()
 
-	return &CreateTableStmt{TableName: table, Columns: cols}
+	return &CreateTableStmt{
+		TableName:   table,
+		Columns:     cols,
+		ForeignKeys: fks,
+	}
 }
 
 // --- SELECT ---

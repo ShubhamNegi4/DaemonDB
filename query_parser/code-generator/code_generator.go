@@ -37,21 +37,37 @@ func EmitBytecode(stmt parser.Statement) []executor.Instruction {
 
 	case *parser.CreateTableStmt:
 
-		// this cols will actually store the schema of the table
+		// -------- Build column schema --------
 		cols := []string{}
 		for _, col := range s.Columns {
 			segment := col.Type + ":" + col.Name
 			if col.IsPrimaryKey {
 				segment += ":pk"
 			}
-			cols = append(cols, segment) // sepreate int:id
+			cols = append(cols, segment)
 		}
-		// join all the cols into a string, to get the schema of the table
+
+		// -------- Build full schema payload (with foreign keys) --------
+		payload := struct {
+			Columns     string                 `json:"columns"`
+			ForeignKeys []parser.ForeignKeyDef `json:"foreign_keys,omitempty"`
+		}{
+			Columns:     strings.Join(cols, ","),
+			ForeignKeys: s.ForeignKeys,
+		}
+
+		payloadJSON, err := json.Marshal(payload)
+		if err != nil {
+			panic(fmt.Sprintf("failed to serialize table schema: %v", err))
+		}
+
+		// Push schema payload
 		instructions = append(instructions, executor.Instruction{
 			Op:    executor.OP_PUSH_VAL,
-			Value: strings.Join(cols, ","), // id:int,name:varchar like this schema will be stored
+			Value: string(payloadJSON),
 		})
 
+		// Create table
 		instructions = append(instructions, executor.Instruction{
 			Op:    executor.OP_CREATE_TABLE,
 			Value: s.TableName,

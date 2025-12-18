@@ -70,9 +70,16 @@ type ColumnDef struct {
 	Type         string `json:"type"`
 	IsPrimaryKey bool   `json:"is_primary_key"`
 }
+type ForeignKeyDef struct {
+	Column    string `json:"column"`
+	RefTable  string `json:"ref_table"`
+	RefColumn string `json:"ref_column"`
+}
+
 type TableSchema struct {
-	TableName string      `json:"table_name"`
-	Columns   []ColumnDef `json:"columns"`
+	TableName   string          `json:"table_name"`
+	Columns     []ColumnDef     `json:"columns"`
+	ForeignKeys []ForeignKeyDef `json:"foreign_keys,omitempty"`
 }
 
 func NewVM(tree *bplus.BPlusTree, heapFileManager *heapfile.HeapFileManager) *VM {
@@ -232,16 +239,24 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 		return fmt.Errorf("no database selected. Run: USE <dbname>")
 	}
 
-	// the stack contains the schema of the table seperate by :
-	encodedSchema := string(vm.stack[len(vm.stack)-1])
+	// Pop schema payload (JSON)
+	schemaPayload := string(vm.stack[len(vm.stack)-1])
 	vm.stack = vm.stack[:len(vm.stack)-1]
 
-	println("schema of table: ", encodedSchema)
-	cols := strings.Split(encodedSchema, ",")
+	var payload struct {
+		Columns     string          `json:"columns"`
+		ForeignKeys []ForeignKeyDef `json:"foreign_keys"`
+	}
 
-	// store the column defination so that it can be converted to JSON later
-	columnDefs := make([]ColumnDef, 0, len(cols))
-	for _, col := range cols {
+	if err := json.Unmarshal([]byte(schemaPayload), &payload); err != nil {
+		return fmt.Errorf("invalid table schema payload: %w", err)
+	}
+
+	// Parse columns
+	colParts := strings.Split(payload.Columns, ",")
+	columnDefs := make([]ColumnDef, 0, len(colParts))
+
+	for _, col := range colParts {
 		colItr := strings.Split(col, ":")
 		if len(colItr) < 2 {
 			return fmt.Errorf("invalid column format: %s", col)
@@ -251,38 +266,101 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 		if colType == "STRING" {
 			colType = "VARCHAR"
 		}
-		columnDefs = append(columnDefs, ColumnDef{Name: colItr[1], Type: colType, IsPrimaryKey: isPK})
+		columnDefs = append(columnDefs, ColumnDef{
+			Name:         colItr[1],
+			Type:         colType,
+			IsPrimaryKey: isPK,
+		})
+	}
+	// ================= FOREIGN KEY VALIDATION (CREATE TABLE) =================
+
+	// Load already existing table schemas (needed when CREATE TABLE is first command)
+	if vm.tableSchemas == nil {
+		vm.tableSchemas = make(map[string]TableSchema)
+	}
+
+	// Validate each foreign key
+	for _, fk := range payload.ForeignKeys {
+
+		// 1. Referenced table must exist
+		refSchema, ok := vm.tableSchemas[fk.RefTable]
+		if !ok {
+			return fmt.Errorf(
+				"foreign key error: referenced table '%s' does not exist",
+				fk.RefTable,
+			)
+		}
+
+		// 2. FK column must exist in current table
+		var fkCol ColumnDef
+		foundFKCol := false
+		for _, c := range columnDefs {
+			if strings.EqualFold(c.Name, fk.Column) {
+				fkCol = c
+				foundFKCol = true
+				break
+			}
+		}
+		if !foundFKCol {
+			return fmt.Errorf(
+				"foreign key error: column '%s' does not exist in table '%s'",
+				fk.Column, tableName,
+			)
+		}
+
+		// 3. Referenced column must exist AND be PRIMARY KEY
+		var refPKCol ColumnDef
+		foundRefPK := false
+		for _, c := range refSchema.Columns {
+			if strings.EqualFold(c.Name, fk.RefColumn) {
+				if !c.IsPrimaryKey {
+					return fmt.Errorf(
+						"foreign key error: referenced column '%s.%s' is not a PRIMARY KEY",
+						fk.RefTable, fk.RefColumn,
+					)
+				}
+				refPKCol = c
+				foundRefPK = true
+				break
+			}
+		}
+		if !foundRefPK {
+			return fmt.Errorf(
+				"foreign key error: referenced column '%s.%s' does not exist",
+				fk.RefTable, fk.RefColumn,
+			)
+		}
+
+		// 4. Column types must match
+		if !strings.EqualFold(fkCol.Type, refPKCol.Type) {
+			return fmt.Errorf(
+				"foreign key error: type mismatch (%s.%s is %s, %s.%s is %s)",
+				tableName, fk.Column, fkCol.Type,
+				fk.RefTable, fk.RefColumn, refPKCol.Type,
+			)
+		}
 	}
 
 	schema := TableSchema{
-		TableName: tableName,
-		Columns:   columnDefs,
+		TableName:   tableName,
+		Columns:     columnDefs,
+		ForeignKeys: payload.ForeignKeys,
 	}
+	vm.tableSchemas[tableName] = schema
 
-	// inside the current selected db, create a table file
-
-	// TODO: check if the table already exists
-
-	// schema.json stores the schema of the table, data.path will store the data
+	// Persist schema
 	schemaPath := filepath.Join(DB_ROOT, vm.currDb, "tables", tableName+"_schema.json")
-
-	// writing on disk in json format for debugging purpose
-	// also writing to disk should be atomic, this write can be half done if a power loss occurs in the process
-	// TODO: two phase commit protocol + journaling (Redo and Undo logging) will make the writes more secure
-
 	schemaJson, _ := json.MarshalIndent(schema, "", "  ")
-	fmt.Println(string(schemaJson))
 	if err := os.WriteFile(schemaPath, schemaJson, 0644); err != nil {
 		return fmt.Errorf("cannot write schema: %w", err)
 	}
 
-	// register the table to the heapfile fileID
+	// Register heap file
 	fileID := vm.heapFileCounter
 	vm.heapFileCounter++
 	vm.tableToFileId[tableName] = fileID
 
 	if err := vm.heapfileManager.CreateHeapfile(tableName, fileID); err != nil {
-		// TODO: drop the table
 		return fmt.Errorf("failed to create heap file: %w", err)
 	}
 
@@ -290,10 +368,7 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 		return fmt.Errorf("failed to save table-fileID mapping: %w", err)
 	}
 
-	vm.LoadTableFileMapping() // loading the mapping for just created table
-
 	fmt.Printf("Table %s created successfully\n", tableName)
-
 	return nil
 }
 
@@ -348,6 +423,43 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 	if len(columnNames) != len(values) {
 		return fmt.Errorf("column count (%d) doesn't match value count (%d)",
 			len(columnNames), len(values))
+	}
+
+	// ================= FOREIGN KEY CHECK =================
+	for _, fk := range schema.ForeignKeys {
+
+		fkColIdx := -1
+		var fkCol ColumnDef
+
+		for i, c := range schema.Columns {
+			if strings.EqualFold(c.Name, fk.Column) {
+				fkColIdx = i
+				fkCol = c
+				break
+			}
+		}
+
+		if fkColIdx == -1 {
+			return fmt.Errorf("foreign key column %s not found", fk.Column)
+		}
+
+		fkValueBytes, err := ValueToBytes(values[fkColIdx], fkCol.Type)
+		if err != nil {
+			return fmt.Errorf("foreign key value error: %w", err)
+		}
+
+		refIndex, err := vm.GetOrCreateIndex(fk.RefTable)
+		if err != nil {
+			return fmt.Errorf("referenced table %s not found", fk.RefTable)
+		}
+
+		refRowPtr, err := refIndex.Search(fkValueBytes)
+		if err != nil || refRowPtr == nil {
+			return fmt.Errorf(
+				"foreign key constraint failed: %s.%s → %s.%s",
+				tableName, fk.Column, fk.RefTable, fk.RefColumn,
+			)
+		}
 	}
 
 	// fmt.Println("Schema columns:", schema.Columns)

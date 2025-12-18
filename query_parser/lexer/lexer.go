@@ -90,7 +90,9 @@ func (l *Lexer) skipWhiteSpaces() {
 }
 
 func isLetter(ch byte) bool {
-	return ('a' <= ch && ch <= 'z') || ('A' <= ch && ch <= 'Z')
+	return ('a' <= ch && ch <= 'z') ||
+		('A' <= ch && ch <= 'Z') ||
+		ch == '_'
 }
 
 func isNumber(ch byte) bool {
@@ -99,7 +101,7 @@ func isNumber(ch byte) bool {
 
 func (l *Lexer) keyIdentLookup() string {
 	start := l.pos
-	for isLetter(l.ch) {
+	for isLetter(l.ch) || isNumber(l.ch) {
 		l.readChar()
 	}
 	return l.input[start:l.pos]
