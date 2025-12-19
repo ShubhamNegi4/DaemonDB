@@ -240,6 +240,8 @@ func (p *Parser) parseSelect() *SelectStmt {
 	isJoin := p.curToken.Kind == lex.JOIN ||
 		p.curToken.Kind == lex.INNER ||
 		p.curToken.Kind == lex.LEFT ||
+		p.curToken.Kind == lex.RIGHT ||
+		p.curToken.Kind == lex.FULL ||
 		p.curToken.Value == "JOIN" ||
 		p.curToken.Value == "INNER"
 
@@ -339,7 +341,7 @@ func (p *Parser) parseUpdate() *UpdateStmt {
 func (p *Parser) parseJoin() (joinTable, joinType, leftCol, rightCol string) {
 	fmt.Println("parsing join")
 	joinType = ""
-	if p.curToken.Kind == lex.INNER || p.curToken.Kind == lex.LEFT {
+	if p.curToken.Kind == lex.INNER || p.curToken.Kind == lex.LEFT || p.curToken.Kind == lex.RIGHT || p.curToken.Kind == lex.FULL {
 		joinType = p.curToken.Value
 		p.nextToken()
 	}

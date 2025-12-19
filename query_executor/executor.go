@@ -711,6 +711,12 @@ func (vm *VM) executeSelectWithJoin(payload SelectPayload) error {
 	switch strings.ToUpper(payload.JoinType) {
 	case "INNER", "":
 		joinedRows = vm.mergeSortInnerJoin(leftRows, rightRows, leftKey, rightKey)
+	case "LEFT":
+		joinedRows = vm.mergeSortOuterJoin(leftRows, rightRows, leftKey, rightKey)
+	case "RIGHT":
+		joinedRows = vm.mergeSortOuterJoin(rightRows, leftRows, rightKey, leftKey)
+	case "FULL":
+		joinedRows = vm.mergeSortFullJoin(leftRows, rightRows, leftKey, rightKey)
 	default:
 		return fmt.Errorf("unsupported join type: %s", payload.JoinType)
 	}
@@ -734,12 +740,9 @@ func (vm *VM) executeSelectWithJoin(payload SelectPayload) error {
 		for _, col := range leftSchema.Columns {
 			displayCols = append(displayCols, payload.Table+"."+col.Name)
 		}
+
 		for _, col := range rightSchema.Columns {
 			qualified := payload.JoinTable + "." + col.Name
-			// Skip the redundant join column from the right table
-			if qualified == rightKey {
-				continue
-			}
 			displayCols = append(displayCols, qualified)
 		}
 	}

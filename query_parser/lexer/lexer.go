@@ -166,10 +166,14 @@ func KeyIdentKind(str string) TokenKind {
 		return LEFT
 	case "RIGHT":
 		return RIGHT
+	case "FULL":
+		return FULL
 	case "ON":
 		return ON
 	case "DOT":
 		return DOT
+	case "NULL":
+		return NULL
 	default:
 		return IDENT
 	}

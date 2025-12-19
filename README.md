@@ -219,6 +219,16 @@ SELECT * from table1 JOIN table2 ON table1.id1 = table2.id2 WHERE table1.id = 5
 
 SELECT * from table1 JOIN table2 ON table1.name = table2.refname WHERE table1.name = "abc"
 
+SELECT * from table1 JOIN table2 ON table1.name = table2.refname WHERE table1.id = NULL
+
+-- similary
+select * from table1 LEFT JOIN table2 on id1 = id2
+
+select * from table1 RIGHT JOIN table2 on id1 = id2
+
+select * from table1 FULL JOIN table2 on id1 = id2
+
+
 -- Table management
 DROP students
 ```

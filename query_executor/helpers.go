@@ -504,12 +504,25 @@ func (vm *VM) mergeSortInnerJoin(left, right []map[string]interface{}, leftCol, 
 	i, j := 0, 0
 	lenL, lenR := len(left), len(right)
 	for i < lenL && j < lenR {
-		leftVal := fmt.Sprintf("%v", left[i][leftCol])
-		rightVal := fmt.Sprintf("%v", right[j][rightCol])
+		leftVal := left[i][leftCol]
+		rightVal := right[j][rightCol]
 
-		if leftVal < rightVal {
+		// if in case the joining key has nil, dont use it
+		if leftVal == nil || rightVal == nil {
+			if leftVal == nil {
+				i++
+			}
+			if rightVal == nil {
+				j++
+			}
+			continue
+		}
+
+		cmp := compareValues(leftVal, rightVal)
+
+		if cmp < 0 {
 			i++
-		} else if leftVal > rightVal {
+		} else if cmp > 0 {
 			j++
 		} else {
 			target := left[i][leftCol]
@@ -541,16 +554,162 @@ func (vm *VM) mergeSortInnerJoin(left, right []map[string]interface{}, leftCol, 
 	return result
 }
 
-func (vm *VM) filterJoinedRows(rows []map[string]interface{}, whereCol, whereVal string) []map[string]interface{} {
-	filtered := []map[string]interface{}{}
-	for _, row := range rows {
-		if val, exists := row[whereCol]; exists {
-			if fmt.Sprintf("%v", val) == whereVal {
-				filtered = append(filtered, row)
+func (vm *VM) mergeSortOuterJoin(left, right []map[string]interface{}, leftCol, rightCol string) []map[string]interface{} {
+
+	result := []map[string]interface{}{}
+	i, j := 0, 0
+
+	// left join Style
+	for i < len(left) {
+		valL := left[i][leftCol]
+
+		if valL == nil || j >= len(right) {
+			result = append(result, vm.copyRowWithNulls(left[i]))
+			i++
+			continue
+		}
+
+		valR := right[j][rightCol]
+		if valR == nil {
+			j++
+			continue
+		}
+
+		cmp := compareValues(valL, valR)
+
+		if cmp < 0 {
+			result = append(result, vm.copyRowWithNulls(left[i]))
+			i++
+		} else if cmp > 0 {
+			j++
+		} else {
+			matchVal := valL
+			leftStart, rightStart := i, j
+
+			for i < len(left) && compareValues(left[i][leftCol], matchVal) == 0 {
+				i++
+			}
+			for j < len(right) && compareValues(right[j][rightCol], matchVal) == 0 {
+				j++
+			}
+
+			for li := leftStart; li < i; li++ {
+				for ri := rightStart; ri < j; ri++ {
+					merged := make(map[string]interface{})
+					for k, v := range left[li] {
+						merged[k] = v
+					}
+					for k, v := range right[ri] {
+						merged[k] = v
+					}
+					result = append(result, merged)
+				}
 			}
 		}
 	}
+	return result
+}
+
+func (vm *VM) mergeSortFullJoin(left, right []map[string]interface{}, leftCol, rightCol string) []map[string]interface{} {
+	result := []map[string]interface{}{}
+	i, j := 0, 0
+
+	// until both tables are exhausted
+	for i < len(left) || j < len(right) {
+
+		// right table exhausted, but Left still has rows
+		if j >= len(right) {
+			result = append(result, vm.copyRowWithNulls(left[i]))
+			i++
+			continue
+		}
+
+		// left table exhausted, but Right still has rows
+		if i >= len(left) {
+			result = append(result, vm.copyRowWithNulls(right[j]))
+			j++
+			continue
+		}
+
+		valL := left[i][leftCol]
+		valR := right[j][rightCol]
+
+		// handle nil values
+		if valL == nil {
+			result = append(result, vm.copyRowWithNulls(left[i]))
+			i++
+			continue
+		}
+		if valR == nil {
+			result = append(result, vm.copyRowWithNulls(right[j]))
+			j++
+			continue
+		}
+
+		cmp := compareValues(valL, valR)
+
+		if cmp < 0 {
+			result = append(result, vm.copyRowWithNulls(left[i]))
+			i++
+		} else if cmp > 0 {
+			result = append(result, vm.copyRowWithNulls(right[j]))
+			j++
+		} else {
+			matchVal := valL
+			leftStart, rightStart := i, j
+
+			for i < len(left) && compareValues(left[i][leftCol], matchVal) == 0 {
+				i++
+			}
+			for j < len(right) && compareValues(right[j][rightCol], matchVal) == 0 {
+				j++
+			}
+
+			for li := leftStart; li < i; li++ {
+				for ri := rightStart; ri < j; ri++ {
+					merged := make(map[string]interface{})
+					for k, v := range left[li] {
+						merged[k] = v
+					}
+					for k, v := range right[ri] {
+						merged[k] = v
+					}
+					result = append(result, merged)
+				}
+			}
+		}
+	}
+	return result
+}
+
+func (vm *VM) filterJoinedRows(rows []map[string]interface{}, whereCol, whereVal string) []map[string]interface{} {
+	filtered := []map[string]interface{}{}
+
+	for _, row := range rows {
+		val := row[whereCol]
+
+		// Handle WHERE column = NULL
+		if strings.ToUpper(whereVal) == "NULL" || whereVal == "" {
+			if val == nil {
+				filtered = append(filtered, row)
+			}
+			continue
+		}
+
+		if val != nil && fmt.Sprintf("%v", val) == whereVal {
+			filtered = append(filtered, row)
+		}
+	}
 	return filtered
+}
+
+// to make sure null rows are added too in case of right or left joins or full join
+func (vm *VM) copyRowWithNulls(rows map[string]interface{}) map[string]interface{} {
+	merged := make(map[string]interface{})
+	for k, v := range rows {
+		merged[k] = v
+	}
+	return merged
 }
 
 /*

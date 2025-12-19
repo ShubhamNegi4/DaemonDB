@@ -35,8 +35,10 @@ const (
 	INNER
 	LEFT
 	RIGHT
+	FULL
 	ON
 	DOT
+	NULL
 )
 
 type Token struct {
@@ -104,10 +106,14 @@ func (tk TokenKind) String() string {
 		return "LEFT"
 	case RIGHT:
 		return "RIGHT"
+	case FULL:
+		return "FULL"
 	case ON:
 		return "ON"
 	case DOT:
 		return "DOT"
+	case NULL:
+		return "NULL"
 	default:
 		return "UNKNOWN"
 	}
