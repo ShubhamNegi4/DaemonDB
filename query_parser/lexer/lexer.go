@@ -58,6 +58,10 @@ func (l *Lexer) NextToken() Token {
 		str := l.readString()
 		tok := Token{Kind: STRING, Value: str}
 		return tok
+	case '.':
+		tok := Token{Kind: DOT, Value: string(l.ch)}
+		l.readChar()
+		return tok
 	case 0:
 		tok := Token{Kind: END, Value: ""}
 		return tok
@@ -154,6 +158,18 @@ func KeyIdentKind(str string) TokenKind {
 		return SHOW
 	case "DROP":
 		return DROP
+	case "JOIN":
+		return JOIN
+	case "INNER":
+		return INNER
+	case "LEFT":
+		return LEFT
+	case "RIGHT":
+		return RIGHT
+	case "ON":
+		return ON
+	case "DOT":
+		return DOT
 	default:
 		return IDENT
 	}

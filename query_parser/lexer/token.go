@@ -31,6 +31,12 @@ const (
 	DATABASE
 	DATABASES
 	SHOW
+	JOIN
+	INNER
+	LEFT
+	RIGHT
+	ON
+	DOT
 )
 
 type Token struct {
@@ -90,6 +96,18 @@ func (tk TokenKind) String() string {
 		return "DATABASES"
 	case SHOW:
 		return "SHOW"
+	case JOIN:
+		return "JOIN"
+	case INNER:
+		return "INNER"
+	case LEFT:
+		return "LEFT"
+	case RIGHT:
+		return "RIGHT"
+	case ON:
+		return "ON"
+	case DOT:
+		return "DOT"
 	default:
 		return "UNKNOWN"
 	}

@@ -82,6 +82,17 @@ type TableSchema struct {
 	ForeignKeys []ForeignKeyDef `json:"foreign_keys,omitempty"`
 }
 
+type SelectPayload struct {
+	Table     string   `json:"table"`
+	Columns   []string `json:"columns"`
+	WhereCol  string   `json:"where_col,omitempty"`
+	WhereVal  string   `json:"where_val,omitempty"`
+	JoinTable string   `json:"join_table,omitempty"`
+	JoinType  string   `json:"join_type,omitempty"`
+	LeftCol   string   `json:"left_col,omitempty"`
+	RightCol  string   `json:"right_col,omitempty"`
+}
+
 func NewVM(tree *bplus.BPlusTree, heapFileManager *heapfile.HeapFileManager) *VM {
 	return &VM{
 		tree:            tree,
@@ -519,14 +530,19 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 // The argument 'arg' is taken from the instruction.Value (CodeGen may pass either cols or table name).
 func (vm *VM) ExecuteSelect(arg string) error {
 	// Decode select payload (table + optional WHERE)
-	var payload struct {
-		Table    string `json:"table"`
-		WhereCol string `json:"where_col"`
-		WhereVal string `json:"where_val"`
-	}
+	var payload SelectPayload
 	if err := json.Unmarshal([]byte(arg), &payload); err != nil {
 		return fmt.Errorf("invalid select payload: %w", err)
 	}
+
+	if payload.JoinTable != "" {
+		return vm.executeSelectWithJoin(payload)
+	} else {
+		return vm.executeSimpleSelect(payload)
+	}
+}
+
+func (vm *VM) executeSimpleSelect(payload SelectPayload) error {
 
 	tableName := payload.Table
 	if tableName == "" {
@@ -560,7 +576,17 @@ func (vm *VM) ExecuteSelect(arg string) error {
 	for _, c := range schema.Columns {
 		colNames = append(colNames, c.Name)
 	}
-	fmt.Println(strings.Join(colNames, " | "))
+	vm.PrintLine(colNames)
+	vm.PrintSeparator(len(colNames))
+
+	// Helper to print a single slice of values
+	displayValues := func(values []interface{}) {
+		strs := make([]string, len(values))
+		for i, v := range values {
+			strs[i] = vm.formatValue(v)
+		}
+		vm.PrintLine(strs)
+	}
 
 	// If WHERE on PK provided, use index lookup
 	if payload.WhereCol != "" {
@@ -605,16 +631,7 @@ func (vm *VM) ExecuteSelect(arg string) error {
 		if err != nil {
 			return fmt.Errorf("error deserializing row (Page %d Slot %d): %w", rowPtr.PageNumber, rowPtr.SlotIndex, err)
 		}
-		strs := make([]string, len(values))
-		for i, v := range values {
-			s, err := toString(v)
-			if err != nil {
-				strs[i] = fmt.Sprintf("%v", v)
-			} else {
-				strs[i] = s
-			}
-		}
-		fmt.Println(strings.Join(strs, " | "))
+		displayValues(values)
 		return nil
 	}
 
@@ -639,20 +656,104 @@ func (vm *VM) ExecuteSelect(arg string) error {
 			continue
 		}
 
-		// Convert values to strings for printing
-		strs := make([]string, len(values))
-		for i, v := range values {
-			s, err := toString(v)
-			if err != nil {
-				// fallback to fmt if toString cannot convert
-				strs[i] = fmt.Sprintf("%v", v)
-			} else {
-				strs[i] = s
-			}
-		}
-
-		fmt.Println(strings.Join(strs, " | "))
+		displayValues(values)
 	}
 
 	return nil
+}
+
+func (vm *VM) executeSelectWithJoin(payload SelectPayload) error {
+
+	fmt.Println("select with join")
+
+	// table rows are stored as array of mapping
+	// where each map key is a string (the tablename.columnname) for all the columns
+	// and each value is an interface to store different types of row data
+
+	// loading the left table rows, left table schema
+	leftRows, leftSchema, err := vm.loadTableRows(payload.Table)
+	if err != nil {
+		return fmt.Errorf("failed to load left table: %w", err)
+	}
+
+	// loading the right table rows, right table schema
+	rightRows, rightSchema, err := vm.loadTableRows(payload.JoinTable)
+	if err != nil {
+		return fmt.Errorf("failed to load right table: %w", err)
+	}
+
+	/*
+		sort the rows based on the join payload column (id)
+		{"id": 2, "name": "Bob"},
+		{"id": 1, "name": "Alice"},
+	*/
+
+	// the join may be like id1 = id or table1.id1 = table2.id2
+	resolveKey := func(table, col string) string {
+		if strings.Contains(col, ".") {
+			parts := strings.Split(col, ".")
+			if parts[0] != table {
+				fmt.Printf("Warning: Table prefix %s does not match %s\n", parts[0], table)
+				return table + "." + parts[1]
+			}
+			return col
+		}
+		return table + "." + col
+	}
+
+	leftKey := resolveKey(payload.Table, payload.LeftCol)
+	rightKey := resolveKey(payload.JoinTable, payload.RightCol)
+
+	vm.sortRowsByColumn(leftRows, leftKey)
+	vm.sortRowsByColumn(rightRows, rightKey)
+
+	var joinedRows []map[string]interface{}
+	switch strings.ToUpper(payload.JoinType) {
+	case "INNER", "":
+		joinedRows = vm.mergeSortInnerJoin(leftRows, rightRows, leftKey, rightKey)
+	default:
+		return fmt.Errorf("unsupported join type: %s", payload.JoinType)
+	}
+
+	fmt.Printf("DEBUG: Joined %d rows before filtering\n", len(joinedRows))
+
+	if payload.WhereCol != "" {
+		whereKey := payload.WhereCol
+		if !strings.Contains(whereKey, ".") {
+			whereKey = payload.Table + "." + payload.WhereCol
+		}
+		joinedRows = vm.filterJoinedRows(joinedRows, whereKey, payload.WhereVal)
+
+		fmt.Printf("DEBUG: %d rows left after filtering\n", len(joinedRows))
+	}
+
+	// displaying the join output
+	displayCols := payload.Columns
+	if len(displayCols) == 0 || (len(displayCols) == 1 && displayCols[0] == "*") {
+		displayCols = []string{}
+		for _, col := range leftSchema.Columns {
+			displayCols = append(displayCols, payload.Table+"."+col.Name)
+		}
+		for _, col := range rightSchema.Columns {
+			qualified := payload.JoinTable + "." + col.Name
+			// Skip the redundant join column from the right table
+			if qualified == rightKey {
+				continue
+			}
+			displayCols = append(displayCols, qualified)
+		}
+	}
+
+	// Unified Printing
+	vm.PrintLine(displayCols)
+	vm.PrintSeparator(len(displayCols))
+	for _, row := range joinedRows {
+		strs := make([]string, len(displayCols))
+		for i, col := range displayCols {
+			strs[i] = vm.formatValue(row[col])
+		}
+		vm.PrintLine(strs)
+	}
+	return nil
+
 }

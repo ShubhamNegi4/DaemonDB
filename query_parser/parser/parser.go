@@ -236,18 +236,28 @@ func (p *Parser) parseSelect() *SelectStmt {
 	table := p.curToken.Value
 	p.nextToken()
 
+	var joinTable, joinType, leftCol, rightCol string
+	isJoin := p.curToken.Kind == lex.JOIN ||
+		p.curToken.Kind == lex.INNER ||
+		p.curToken.Kind == lex.LEFT ||
+		p.curToken.Value == "JOIN" ||
+		p.curToken.Value == "INNER"
+
+	if isJoin {
+		joinTable, joinType, leftCol, rightCol = p.parseJoin()
+	}
+
 	var whereCol, whereVal string
 	if p.curToken.Kind == lex.WHERE {
 		p.nextToken()
-		whereCol = p.curToken.Value
-		p.nextToken()
+		whereCol = p.parseQualifiedIdentifier() // could be a simple colname or table.colname in join
 		p.expect(lex.EQUAL)
 		p.nextToken()
 		whereVal = p.curToken.Value
 		p.nextToken()
 	}
 
-	return &SelectStmt{Columns: cols, Table: table, WhereCol: whereCol, WhereValue: whereVal}
+	return &SelectStmt{Columns: cols, Table: table, WhereCol: whereCol, WhereValue: whereVal, JoinTable: joinTable, JoinType: joinType, LeftCol: leftCol, Rightcol: rightCol}
 }
 
 // --- INSERT ---
@@ -323,4 +333,44 @@ func (p *Parser) parseUpdate() *UpdateStmt {
 		}
 	}
 	return &UpdateStmt{Table: table, Assignments: assignments}
+}
+
+// -- JOIN --
+func (p *Parser) parseJoin() (joinTable, joinType, leftCol, rightCol string) {
+	fmt.Println("parsing join")
+	joinType = ""
+	if p.curToken.Kind == lex.INNER || p.curToken.Kind == lex.LEFT {
+		joinType = p.curToken.Value
+		p.nextToken()
+	}
+
+	p.expect(lex.JOIN)
+	p.nextToken()
+
+	joinTable = strings.TrimSpace(p.curToken.Value)
+	p.nextToken()
+
+	p.expect(lex.ON)
+	p.nextToken()
+
+	// join condition: table1.col = table2.col
+	leftCol = p.parseQualifiedIdentifier()
+	p.expect(lex.EQUAL)
+	p.nextToken()
+	rightCol = p.parseQualifiedIdentifier()
+
+	return joinTable, joinType, leftCol, rightCol
+}
+
+func (p *Parser) parseQualifiedIdentifier() string {
+	ident := p.curToken.Value
+	p.nextToken()
+
+	// If the next token is a dot, consume it and the next part
+	if p.curToken.Kind == lex.DOT || p.curToken.Value == "." {
+		p.nextToken()
+		ident = ident + "." + p.curToken.Value
+		p.nextToken()
+	}
+	return ident
 }

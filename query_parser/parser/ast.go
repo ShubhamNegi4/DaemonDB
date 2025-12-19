@@ -23,6 +23,12 @@ type SelectStmt struct {
 	Table      string
 	WhereCol   string
 	WhereValue string
+
+	// join
+	JoinType  string
+	JoinTable string
+	LeftCol   string
+	Rightcol  string
 }
 
 // CREATE TABLE statement
@@ -38,7 +44,7 @@ type ColumnDef struct {
 	IsPrimaryKey bool   `json:"is_primary_key"`
 }
 
-//For foreign key
+// For foreign key
 type ForeignKeyDef struct {
 	Column    string `json:"column"`     // child column
 	RefTable  string `json:"ref_table"`  // parent table

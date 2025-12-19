@@ -204,6 +204,21 @@ SELECT name, grade FROM students
 -- Data updates
 UPDATE students SET grade = "A+" WHERE id = "S001"
 
+-- Table Join
+-- JOIN by default does INNER JOIN
+
+SELECT * FROM table1 JOIN table2 ON id1 = id2 
+
+SELECT * FROM table1 INNER JOIN table2 ON id1 = id2 
+
+SELECT * FROM table1 JOIN table2 ON table1.id1 = table2.id2
+
+SELECT * from table1 JOIN table2 ON id1 = id2 WHERE table1.id = 5
+
+SELECT * from table1 JOIN table2 ON table1.id1 = table2.id2 WHERE table1.id = 5
+
+SELECT * from table1 JOIN table2 ON table1.name = table2.refname WHERE table1.name = "abc"
+
 -- Table management
 DROP students
 ```

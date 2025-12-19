@@ -99,14 +99,14 @@ func EmitBytecode(stmt parser.Statement) []executor.Instruction {
 		whereCol := s.WhereCol
 		whereVal := s.WhereValue
 		// package select metadata as JSON for executor
-		payload := struct {
-			Table    string `json:"table"`
-			WhereCol string `json:"where_col,omitempty"`
-			WhereVal string `json:"where_val,omitempty"`
-		}{
-			Table:    s.Table,
-			WhereCol: whereCol,
-			WhereVal: whereVal,
+		payload := executor.SelectPayload{
+			Table:     s.Table,
+			WhereCol:  whereCol,
+			WhereVal:  whereVal,
+			JoinTable: s.JoinTable,
+			JoinType:  s.JoinType,
+			LeftCol:   s.LeftCol,
+			RightCol:  s.Rightcol,
 		}
 		payloadJSON, _ := json.Marshal(payload)
 		// Execute select

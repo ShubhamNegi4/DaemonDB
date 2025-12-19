@@ -10,6 +10,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -100,6 +102,74 @@ func toFloat(v any) (float32, error) {
 
 	default:
 		return 0, fmt.Errorf("expected float, got %T", v)
+	}
+}
+
+func isInteger(v reflect.Value) bool {
+	kind := v.Kind()
+	return kind >= reflect.Int && kind <= reflect.Int64
+}
+
+func isFloat(v reflect.Value) bool {
+	kind := v.Kind()
+	return kind == reflect.Float32 || kind == reflect.Float64
+}
+
+func compareValues(v1, v2 interface{}) int {
+	if v1 == nil || v2 == nil {
+		if v1 == v2 {
+			return 0
+		}
+		if v1 == nil {
+			return -1
+		}
+		return 1
+	}
+
+	// Use reflection to handle various numeric types (int32, int64, float64, etc.)
+	val1 := reflect.ValueOf(v1)
+	val2 := reflect.ValueOf(v2)
+
+	switch {
+	case isInteger(val1) && isInteger(val2):
+		i1, i2 := val1.Int(), val2.Int()
+		if i1 < i2 {
+			return -1
+		}
+		if i1 > i2 {
+			return 1
+		}
+		return 0
+	case isFloat(val1) || isFloat(val2):
+		// Promote to float if either is a float
+		var f1, f2 float64
+		if isFloat(val1) {
+			f1 = val1.Float()
+		} else {
+			f1 = float64(val1.Int())
+		}
+		if isFloat(val2) {
+			f2 = val2.Float()
+		} else {
+			f2 = float64(val2.Int())
+		}
+		if f1 < f2 {
+			return -1
+		}
+		if f1 > f2 {
+			return 1
+		}
+		return 0
+	default:
+		// Fallback to string comparison for everything else
+		s1, s2 := fmt.Sprintf("%v", v1), fmt.Sprintf("%v", v2)
+		if s1 < s2 {
+			return -1
+		}
+		if s1 > s2 {
+			return 1
+		}
+		return 0
 	}
 }
 
@@ -244,6 +314,67 @@ func (vm *VM) DeserializeRowPointer(b []byte) (*heapfile.RowPointer, error) {
 
 /*
 
+******************************* LOAD TABLE ROWS *******************************
+
+
+ */
+
+func (vm *VM) loadTableRows(tableName string) ([]map[string]interface{}, TableSchema, error) {
+	fileID, ok := vm.tableToFileId[tableName]
+	if !ok {
+		return nil, TableSchema{}, fmt.Errorf("table '%s' not found", tableName)
+	}
+
+	hf, err := vm.heapfileManager.GetHeapFileByID(fileID)
+	if err != nil {
+		return nil, TableSchema{}, fmt.Errorf("failed to get heapfile: %w", err)
+	}
+
+	schemaPath := filepath.Join(DB_ROOT, vm.currDb, "tables", tableName+"_schema.json")
+	data, err := os.ReadFile(schemaPath)
+	if err != nil {
+		return nil, TableSchema{}, fmt.Errorf("failed to read schema: %w", err)
+	}
+
+	var schema TableSchema
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return nil, TableSchema{}, fmt.Errorf("invalid schema: %w", err)
+	}
+
+	rowPtrs := hf.GetAllRowPointers()
+	rows := []map[string]interface{}{}
+
+	for _, rp := range rowPtrs {
+		raw, err := vm.heapfileManager.GetRow(rp)
+		if err != nil {
+			continue
+		}
+
+		values, err := vm.DeserializeRow(raw, schema.Columns)
+		if err != nil {
+			continue
+		}
+
+		// there is a mapping
+		// the column name acts as the key
+		// because then while doing joins, table1.id = table2.id can be matched
+
+		row := make(map[string]interface{})
+		for i, col := range schema.Columns {
+			val := values[i]
+			if s, ok := val.(string); ok {
+				val = strings.TrimSpace(s)
+			}
+			row[tableName+"."+col.Name] = val
+		}
+		rows = append(rows, row)
+	}
+
+	return rows, schema, nil
+}
+
+/*
+
 ******************************* LOAD and SAVE MAPPINGS and TABLE SCHEMA *******************************
 
 
@@ -351,6 +482,79 @@ func (vm *VM) LoadAllTableSchemas() error {
 
 /*
 
+********************************* MERGE, SORT AND FILTER FOR JOINS *********************************
+
+ */
+
+func (vm *VM) sortRowsByColumn(rows []map[string]interface{}, colName string) {
+	/*
+		rows[0]["id"] = 2
+		rows[1]["id"] = 1
+
+		or could be
+		rows[0]["name"] = "temp"
+	*/
+	sort.Slice(rows, func(i, j int) bool {
+		return compareValues(rows[i][colName], rows[j][colName]) < 0
+	})
+}
+
+func (vm *VM) mergeSortInnerJoin(left, right []map[string]interface{}, leftCol, rightCol string) []map[string]interface{} {
+	result := []map[string]interface{}{}
+	i, j := 0, 0
+	lenL, lenR := len(left), len(right)
+	for i < lenL && j < lenR {
+		leftVal := fmt.Sprintf("%v", left[i][leftCol])
+		rightVal := fmt.Sprintf("%v", right[j][rightCol])
+
+		if leftVal < rightVal {
+			i++
+		} else if leftVal > rightVal {
+			j++
+		} else {
+			target := left[i][leftCol]
+			leftStart := i
+			for i < len(left) && compareValues(left[i][leftCol], target) == 0 { // iterate till same
+				i++
+			}
+
+			rightStart := j
+			for j < len(right) && compareValues(right[j][rightCol], target) == 0 {
+				j++
+			}
+
+			// combination of matching rows
+			for li := leftStart; li < i; li++ {
+				for ri := rightStart; ri < j; ri++ {
+					merged := make(map[string]interface{})
+					for k, v := range left[li] {
+						merged[k] = v
+					}
+					for k, v := range right[ri] {
+						merged[k] = v
+					}
+					result = append(result, merged)
+				}
+			}
+		}
+	}
+	return result
+}
+
+func (vm *VM) filterJoinedRows(rows []map[string]interface{}, whereCol, whereVal string) []map[string]interface{} {
+	filtered := []map[string]interface{}{}
+	for _, row := range rows {
+		if val, exists := row[whereCol]; exists {
+			if fmt.Sprintf("%v", val) == whereVal {
+				filtered = append(filtered, row)
+			}
+		}
+	}
+	return filtered
+}
+
+/*
+
 ********************************* INDEXING FOR BPLUS TREE *********************************
 
  */
@@ -431,38 +635,31 @@ func OpenBPlusTree(indexPath string) (*bplus.BPlusTree, error) {
 }
 
 /*
-
- ********************************* PRINTING TABLE *********************************
-
-
+********************************* PRINTING TABLE *********************************
  */
-
-func (vm *VM) PrintTableHeader(columns []ColumnDef) {
-	for i, col := range columns {
-		fmt.Printf("%-20s", col.Name)
-		if i < len(columns)-1 {
+func (vm *VM) PrintLine(cells []string) {
+	for i, cell := range cells {
+		fmt.Printf("%-20s", cell)
+		if i < len(cells)-1 {
 			fmt.Print("| ")
 		}
 	}
 	fmt.Println()
-	fmt.Println(strings.Repeat("-", 22*len(columns)))
 }
 
-// PrintTableRow prints a single row in formatted style with consistent width
-func (vm *VM) PrintTableRow(rowValues []any, columns []ColumnDef) {
-	for i := range columns {
-		val := rowValues[i]
-
-		// Convert any type to readable string safely
-		str := fmt.Sprintf("%v", val)
-
-		// FIXED: Print with consistent width (20 chars like header)
-		fmt.Printf("%-20s", str)
-
-		// Separator except for last column
-		if i < len(columns)-1 {
-			fmt.Print("| ")
-		}
+func (vm *VM) PrintSeparator(count int) {
+	if count > 0 {
+		fmt.Println(strings.Repeat("-", (22*count)-2))
 	}
-	fmt.Println()
+}
+
+func (vm *VM) formatValue(val interface{}) string {
+	if val == nil {
+		return "NULL"
+	}
+	s, err := toString(val)
+	if err != nil {
+		return fmt.Sprintf("%v", val)
+	}
+	return s
 }
