@@ -7,6 +7,7 @@ import (
 	codegen "DaemonDB/query_parser/code-generator"
 	lex "DaemonDB/query_parser/lexer"
 	"DaemonDB/query_parser/parser"
+	"DaemonDB/wal_manager"
 	"bufio"
 	"bytes"
 	"log"
@@ -19,21 +20,29 @@ import (
 
 func main() {
 
+	walManager, err := wal_manager.OpenWAL("databases/demoDB/logs") // fixed for now, depends on database too
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	// Initialize B+ Tree with in-memory pager; table-specific on-disk indexes are opened per-table via GetOrCreateIndex
 	pager := bplus.NewInMemoryPager()
 	cache := bplus.NewBufferPool(10)
 	tree := bplus.NewBPlusTree(pager, cache, bytes.Compare)
 
 	// a must `USE DATABASE` command will initialize this
-	heapFileManager, err := heapfile.NewHeapFileManager("")
+	heapFileManager, err := heapfile.NewHeapFileManager("databases/demoDB")
 	if err != nil {
+		walManager.Close()
 		log.Fatal(err)
 	}
 
-	if err != nil {
-		panic(err)
+	vm := executor.NewVM(tree, heapFileManager, walManager)
+
+	if err := vm.RecoverAndReplayFromWAL(); err != nil {
+		walManager.Close()
+		log.Fatal(err)
 	}
-	vm := executor.NewVM(tree, heapFileManager)
 
 	scanner := bufio.NewScanner(os.Stdin)
 	// REPL

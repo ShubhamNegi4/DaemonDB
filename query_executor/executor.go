@@ -15,15 +15,21 @@ the vdbe like vm is currently a stack based apporach
      │       ↓
      │   HeapFile.writePage() - Disk I/O for data
      │
-     └─→ B+ Tree - Writes INDEX DATA to disk
+     ├─→ B+ Tree - Writes INDEX DATA to disk
+     │       ↓
+	 │   Pager.WritePage() - Disk I/O for index
+	 |
+	 └─→ WAL - fsync operations to Disk
              ↓
-         Pager.WritePage() - Disk I/O for index
+         Replay Logs
 
 */
 
 import (
 	bplus "DaemonDB/bplustree"
 	heapfile "DaemonDB/heapfile_manager"
+	"DaemonDB/types"
+	"DaemonDB/wal_manager"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -31,76 +37,16 @@ import (
 	"strings"
 )
 
-const DB_ROOT = "./databases" // all databases stored here
-
-type OpCode byte
-
-const (
-	// stack
-	OP_PUSH_VAL OpCode = iota
-	OP_PUSH_KEY
-
-	// sql command
-	OP_CREATE_DB
-	OP_SHOW_DB
-	OP_USE_DB
-	OP_CREATE_TABLE
-	OP_INSERT
-	OP_SELECT
-	OP_END
-)
-
-type Instruction struct {
-	Op    OpCode
-	Value string
-}
-
-type VM struct {
-	tree            *bplus.BPlusTree
-	stack           [][]byte
-	currDb          string
-	heapfileManager *heapfile.HeapFileManager
-	tableToFileId   map[string]uint32 // table name to heap file id
-	heapFileCounter uint32            // for current db, whats the heap file counter
-	tableSchemas    map[string]TableSchema
-}
-
-type ColumnDef struct {
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	IsPrimaryKey bool   `json:"is_primary_key"`
-}
-type ForeignKeyDef struct {
-	Column    string `json:"column"`
-	RefTable  string `json:"ref_table"`
-	RefColumn string `json:"ref_column"`
-}
-
-type TableSchema struct {
-	TableName   string          `json:"table_name"`
-	Columns     []ColumnDef     `json:"columns"`
-	ForeignKeys []ForeignKeyDef `json:"foreign_keys,omitempty"`
-}
-
-type SelectPayload struct {
-	Table     string   `json:"table"`
-	Columns   []string `json:"columns"`
-	WhereCol  string   `json:"where_col,omitempty"`
-	WhereVal  string   `json:"where_val,omitempty"`
-	JoinTable string   `json:"join_table,omitempty"`
-	JoinType  string   `json:"join_type,omitempty"`
-	LeftCol   string   `json:"left_col,omitempty"`
-	RightCol  string   `json:"right_col,omitempty"`
-}
-
-func NewVM(tree *bplus.BPlusTree, heapFileManager *heapfile.HeapFileManager) *VM {
+func NewVM(tree *bplus.BPlusTree, heapFileManager *heapfile.HeapFileManager, walManager *wal_manager.WALManager) *VM {
 	return &VM{
 		tree:            tree,
+		WalManager:      walManager,
 		stack:           make([][]byte, 0),
 		currDb:          "demoDB",
 		heapfileManager: heapFileManager,
 		tableToFileId:   make(map[string]uint32),
 		heapFileCounter: 1,
+		tableSchemas:    make(map[string]types.TableSchema),
 	}
 }
 
@@ -255,8 +201,8 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 	vm.stack = vm.stack[:len(vm.stack)-1]
 
 	var payload struct {
-		Columns     string          `json:"columns"`
-		ForeignKeys []ForeignKeyDef `json:"foreign_keys"`
+		Columns     string                `json:"columns"`
+		ForeignKeys []types.ForeignKeyDef `json:"foreign_keys"`
 	}
 
 	if err := json.Unmarshal([]byte(schemaPayload), &payload); err != nil {
@@ -265,7 +211,7 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 
 	// Parse columns
 	colParts := strings.Split(payload.Columns, ",")
-	columnDefs := make([]ColumnDef, 0, len(colParts))
+	columnDefs := make([]types.ColumnDef, 0, len(colParts))
 
 	for _, col := range colParts {
 		colItr := strings.Split(col, ":")
@@ -277,7 +223,7 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 		if colType == "STRING" {
 			colType = "VARCHAR"
 		}
-		columnDefs = append(columnDefs, ColumnDef{
+		columnDefs = append(columnDefs, types.ColumnDef{
 			Name:         colItr[1],
 			Type:         colType,
 			IsPrimaryKey: isPK,
@@ -287,7 +233,7 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 
 	// Load already existing table schemas (needed when CREATE TABLE is first command)
 	if vm.tableSchemas == nil {
-		vm.tableSchemas = make(map[string]TableSchema)
+		vm.tableSchemas = make(map[string]types.TableSchema)
 	}
 
 	// Validate each foreign key
@@ -303,7 +249,7 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 		}
 
 		// 2. FK column must exist in current table
-		var fkCol ColumnDef
+		var fkCol types.ColumnDef
 		foundFKCol := false
 		for _, c := range columnDefs {
 			if strings.EqualFold(c.Name, fk.Column) {
@@ -320,7 +266,7 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 		}
 
 		// 3. Referenced column must exist AND be PRIMARY KEY
-		var refPKCol ColumnDef
+		var refPKCol types.ColumnDef
 		foundRefPK := false
 		for _, c := range refSchema.Columns {
 			if strings.EqualFold(c.Name, fk.RefColumn) {
@@ -352,12 +298,33 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 		}
 	}
 
-	schema := TableSchema{
+	schema := types.TableSchema{
 		TableName:   tableName,
 		Columns:     columnDefs,
 		ForeignKeys: payload.ForeignKeys,
 	}
 	vm.tableSchemas[tableName] = schema
+
+	// =============== WRITING TO WAL ===============
+
+	op := &types.Operation{
+		Type:   types.OpCreateTable,
+		Table:  tableName,
+		Schema: &schema,
+	}
+	// fmt.Printf("Created a Create Opertion for WAL %+v", op)
+
+	_, err := vm.WalManager.AppendOperation(op)
+	if err != nil {
+		return fmt.Errorf("wal append failed: %w", err)
+	}
+
+	// WAL is fsynced before applying changes
+	if err := vm.WalManager.Sync(); err != nil {
+		return fmt.Errorf("wal sync failed: %w", err)
+	}
+
+	// =============== WRITING SCHEMA TO DISK ===============
 
 	// Persist schema
 	schemaPath := filepath.Join(DB_ROOT, vm.currDb, "tables", tableName+"_schema.json")
@@ -396,7 +363,7 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 		return fmt.Errorf("table not found %s: %w", tableName, err)
 	}
 
-	var schema TableSchema
+	var schema types.TableSchema
 
 	if err := json.Unmarshal(data, &schema); err != nil {
 		return fmt.Errorf("invalid schema: %w", err)
@@ -407,12 +374,12 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 		return fmt.Errorf("heap file not found for table '%s'", tableName)
 	}
 
-	columnNames := []ColumnDef{}
+	columnNames := []types.ColumnDef{}
 	// If no column names provided, use all columns from schema
 	// for now our insert query doesnt take columns as a token
 	if len(columnNames) == 0 {
 		for _, col := range schema.Columns {
-			columnNames = append(columnNames, ColumnDef{col.Name, col.Type, col.IsPrimaryKey})
+			columnNames = append(columnNames, types.ColumnDef{Name: col.Name, Type: col.Type, IsPrimaryKey: col.IsPrimaryKey})
 		}
 	}
 
@@ -440,7 +407,7 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 	for _, fk := range schema.ForeignKeys {
 
 		fkColIdx := -1
-		var fkCol ColumnDef
+		var fkCol types.ColumnDef
 
 		for i, c := range schema.Columns {
 			if strings.EqualFold(c.Name, fk.Column) {
@@ -490,6 +457,25 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 
 	// fmt.Print("file Id: ", fileID)
 	// fmt.Print("row:  ", string(row))
+
+	// =============== WRITING TO WAL ===============
+
+	op := &types.Operation{
+		Type:    types.OpInsert,
+		Table:   tableName,
+		RowData: row,
+	}
+	// fmt.Printf("Created an Insert Opertion for WAL %+v", op)
+
+	_, err = vm.WalManager.AppendOperation(op)
+	if err != nil {
+		return fmt.Errorf("wal append failed: %w", err)
+	}
+
+	// WAL is fsynced before applying changes
+	if err := vm.WalManager.Sync(); err != nil {
+		return fmt.Errorf("wal sync failed: %w", err)
+	}
 
 	rowPtr, err := vm.heapfileManager.InsertRow(fileID, row)
 	if err != nil {
@@ -566,7 +552,7 @@ func (vm *VM) executeSimpleSelect(payload SelectPayload) error {
 	if err != nil {
 		return fmt.Errorf("failed to read schema for %s: %w", tableName, err)
 	}
-	var schema TableSchema
+	var schema types.TableSchema
 	if err := json.Unmarshal(data, &schema); err != nil {
 		return fmt.Errorf("invalid schema for %s: %w", tableName, err)
 	}
@@ -591,7 +577,7 @@ func (vm *VM) executeSimpleSelect(payload SelectPayload) error {
 	// If WHERE on PK provided, use index lookup
 	if payload.WhereCol != "" {
 		pkColIdx := -1
-		var pkCol ColumnDef
+		var pkCol types.ColumnDef
 		for i, c := range schema.Columns {
 			if strings.EqualFold(c.Name, payload.WhereCol) && c.IsPrimaryKey {
 				pkColIdx = i

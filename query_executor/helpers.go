@@ -3,6 +3,7 @@ package executor
 import (
 	bplus "DaemonDB/bplustree"
 	heapfile "DaemonDB/heapfile_manager"
+	"DaemonDB/types"
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
@@ -173,7 +174,7 @@ func compareValues(v1, v2 interface{}) int {
 	}
 }
 
-func (vm *VM) SerializeRow(cols []ColumnDef, values []any) ([]byte, error) {
+func (vm *VM) SerializeRow(cols []types.ColumnDef, values []any) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	for i, col := range cols {
@@ -268,7 +269,7 @@ func BytesToValue(b []byte, typ string) (any, int, error) {
 	return nil, 0, fmt.Errorf("unknown type %s", typ)
 }
 
-func (vm *VM) DeserializeRow(row []byte, cols []ColumnDef) ([]any, error) {
+func (vm *VM) DeserializeRow(row []byte, cols []types.ColumnDef) ([]any, error) {
 	out := make([]any, len(cols))
 	offset := 0
 
@@ -319,26 +320,26 @@ func (vm *VM) DeserializeRowPointer(b []byte) (*heapfile.RowPointer, error) {
 
  */
 
-func (vm *VM) loadTableRows(tableName string) ([]map[string]interface{}, TableSchema, error) {
+func (vm *VM) loadTableRows(tableName string) ([]map[string]interface{}, types.TableSchema, error) {
 	fileID, ok := vm.tableToFileId[tableName]
 	if !ok {
-		return nil, TableSchema{}, fmt.Errorf("table '%s' not found", tableName)
+		return nil, types.TableSchema{}, fmt.Errorf("table '%s' not found", tableName)
 	}
 
 	hf, err := vm.heapfileManager.GetHeapFileByID(fileID)
 	if err != nil {
-		return nil, TableSchema{}, fmt.Errorf("failed to get heapfile: %w", err)
+		return nil, types.TableSchema{}, fmt.Errorf("failed to get heapfile: %w", err)
 	}
 
 	schemaPath := filepath.Join(DB_ROOT, vm.currDb, "tables", tableName+"_schema.json")
 	data, err := os.ReadFile(schemaPath)
 	if err != nil {
-		return nil, TableSchema{}, fmt.Errorf("failed to read schema: %w", err)
+		return nil, types.TableSchema{}, fmt.Errorf("failed to read schema: %w", err)
 	}
 
-	var schema TableSchema
+	var schema types.TableSchema
 	if err := json.Unmarshal(data, &schema); err != nil {
-		return nil, TableSchema{}, fmt.Errorf("invalid schema: %w", err)
+		return nil, types.TableSchema{}, fmt.Errorf("invalid schema: %w", err)
 	}
 
 	rowPtrs := hf.GetAllRowPointers()
@@ -465,14 +466,14 @@ func (vm *VM) LoadAllTableSchemas() error {
 			return fmt.Errorf("failed to read schema file %s: %w", schemaPath, err)
 		}
 
-		var schema TableSchema
+		var schema types.TableSchema
 		if err := json.Unmarshal(data, &schema); err != nil {
 			return fmt.Errorf("invalid schema in file %s: %w", schemaPath, err)
 		}
 
 		// Register table schema in VM
 		if vm.tableSchemas == nil {
-			vm.tableSchemas = make(map[string]TableSchema)
+			vm.tableSchemas = make(map[string]types.TableSchema)
 		}
 		vm.tableSchemas[schema.TableName] = schema
 	}
@@ -718,7 +719,7 @@ func (vm *VM) copyRowWithNulls(rows map[string]interface{}) map[string]interface
 
  */
 
-func (vm *VM) ExtractPrimaryKey(schema TableSchema, values []any, rowPtr *heapfile.RowPointer) ([]byte, string, error) {
+func (vm *VM) ExtractPrimaryKey(schema types.TableSchema, values []any, rowPtr *heapfile.RowPointer) ([]byte, string, error) {
 	// Option 1: Use explicit primary key if defined
 	for i, col := range schema.Columns {
 		if col.IsPrimaryKey {
