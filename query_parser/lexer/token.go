@@ -25,6 +25,12 @@ const (
 	OPENROUNDED
 	CLOSEDROUNDED
 	DROP
+
+	// TRANSACTIONS (NEW)
+	BEGIN
+	COMMIT
+	ROLLBACK
+
 	END
 	INVALID
 	TABLE
@@ -62,6 +68,12 @@ func (tk TokenKind) String() string {
 		return "UPDATE"
 	case SET:
 		return "SET"
+	case BEGIN:
+		return "BEGIN"
+	case COMMIT:
+		return "COMMIT"
+	case ROLLBACK:
+		return "ROLLBACK"
 	case FROM:
 		return "FROM"
 	case WHERE:

@@ -33,6 +33,21 @@ func (p *Parser) expect(kind lex.TokenKind) {
 // Entry point
 func (p *Parser) ParseStatement() Statement {
 	switch p.curToken.Kind {
+
+	// 🔹 TRANSACTIONS (NEW)
+	case lex.BEGIN:
+		p.nextToken()
+		return &BeginTxnStmt{}
+
+	case lex.COMMIT:
+		p.nextToken()
+		return &CommitTxnStmt{}
+
+	case lex.ROLLBACK:
+		p.nextToken()
+		return &RollbackTxnStmt{}
+
+	// 🔹 EXISTING
 	case lex.SHOW:
 		return p.parseShowDatabases()
 	case lex.SELECT:
@@ -57,6 +72,7 @@ func (p *Parser) ParseStatement() Statement {
 			}
 		}
 	}
+
 	panic(fmt.Sprintf("unexpected token: %s (%s)", p.curToken.Kind, p.curToken.Value))
 }
 

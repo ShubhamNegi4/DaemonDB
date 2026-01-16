@@ -158,6 +158,13 @@ func KeyIdentKind(str string) TokenKind {
 		return SHOW
 	case "DROP":
 		return DROP
+	case "BEGIN":
+		return BEGIN
+	case "COMMIT":
+		return COMMIT
+	case "ROLLBACK":
+		return ROLLBACK
+
 	case "JOIN":
 		return JOIN
 	case "INNER":

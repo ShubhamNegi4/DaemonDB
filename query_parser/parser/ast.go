@@ -67,3 +67,11 @@ type UpdateStmt struct {
 	Table       string
 	Assignments map[string]string
 }
+
+// TRANSACTION statements
+
+type BeginTxnStmt struct{}
+
+type CommitTxnStmt struct{}
+
+type RollbackTxnStmt struct{}

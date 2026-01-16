@@ -11,29 +11,56 @@ import (
 func (vm *VM) RecoverAndReplayFromWAL() error {
 	fmt.Println("Starting WAL recovery...")
 
-	// Replay all operations
-	operationCount := 0
+	// -------- PASS 0: read all WAL ops into memory --------
+
+	var ops []*types.Operation
+
 	err := vm.WalManager.ReplayFromLSN(0, func(op *types.Operation) error {
-		operationCount++
-		fmt.Printf("Replaying LSN operation #%d: %s on table '%s'\n",
-			operationCount, opTypeToString(op.Type), op.Table)
-
-		switch op.Type {
-		case types.OpCreateTable:
-			return vm.replayCreateTable(op)
-		case types.OpInsert:
-			return vm.replayInsert(op)
-
-		default:
-			return fmt.Errorf("unknown operation type: %d", op.Type)
-		}
+		ops = append(ops, op)
+		return nil
 	})
-
 	if err != nil {
-		return fmt.Errorf("WAL recovery failed: %w", err)
+		return fmt.Errorf("failed to read WAL: %w", err)
 	}
 
-	fmt.Printf("WAL recovery completed. Replayed %d operations.\n", operationCount)
+	// -------- PASS 1: find committed transactions --------
+
+	committed := make(map[uint64]bool)
+
+	for _, op := range ops {
+		if op.Type == types.OpTxnCommit {
+			committed[op.TxnID] = true
+		}
+	}
+
+	// -------- PASS 2: replay only committed ops --------
+
+	replayed := 0
+
+	for _, op := range ops {
+
+		// Skip uncommitted transactional ops
+		if op.TxnID != 0 && !committed[op.TxnID] {
+			continue
+		}
+
+		switch op.Type {
+
+		case types.OpCreateTable:
+			if err := vm.replayCreateTable(op); err != nil {
+				return err
+			}
+			replayed++
+
+		case types.OpInsert:
+			if err := vm.replayInsert(op); err != nil {
+				return err
+			}
+			replayed++
+		}
+	}
+
+	fmt.Printf("WAL recovery completed. Replayed %d operations.\n", replayed)
 	return nil
 }
 

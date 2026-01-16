@@ -23,6 +23,12 @@ const (
 	OP_CREATE_TABLE
 	OP_INSERT
 	OP_SELECT
+
+	//  TRANSACTIONS (NEW)
+	OP_TXN_BEGIN
+	OP_TXN_COMMIT
+	OP_TXN_ROLLBACK
+
 	OP_END
 )
 
@@ -34,9 +40,15 @@ type Instruction struct {
 type VM struct {
 	tree            *bplus.BPlusTree
 	WalManager      *wal_manager.WALManager
+	heapfileManager *heapfile.HeapFileManager
+
+	// 🔹 TRANSACTIONS (NEW)
+	TxnManager *TxnManager
+	currentTxn *Transaction
+
+	// existing fields
 	stack           [][]byte
 	currDb          string
-	heapfileManager *heapfile.HeapFileManager
 	tableToFileId   map[string]uint32 // table name to heap file id
 	heapFileCounter uint32            // for current db, whats the heap file counter
 	tableSchemas    map[string]types.TableSchema

@@ -14,6 +14,21 @@ func EmitBytecode(stmt parser.Statement) []executor.Instruction {
 
 	switch s := stmt.(type) {
 
+	case *parser.BeginTxnStmt:
+		instructions = append(instructions, executor.Instruction{
+			Op: executor.OP_TXN_BEGIN,
+		})
+
+	case *parser.CommitTxnStmt:
+		instructions = append(instructions, executor.Instruction{
+			Op: executor.OP_TXN_COMMIT,
+		})
+
+	case *parser.RollbackTxnStmt:
+		instructions = append(instructions, executor.Instruction{
+			Op: executor.OP_TXN_ROLLBACK,
+		})
+
 	case *parser.CreateDatabaseStmt:
 		fmt.Println("CREATE DATABASE", s.DbName)
 

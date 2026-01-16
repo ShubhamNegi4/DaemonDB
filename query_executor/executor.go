@@ -41,9 +41,14 @@ func NewVM(tree *bplus.BPlusTree, heapFileManager *heapfile.HeapFileManager, wal
 	return &VM{
 		tree:            tree,
 		WalManager:      walManager,
+		heapfileManager: heapFileManager,
+
+		// 🔹 TRANSACTIONS (NEW)
+		TxnManager: NewTxnManager(),
+
+		// existing fields
 		stack:           make([][]byte, 0),
 		currDb:          "demoDB",
-		heapfileManager: heapFileManager,
 		tableToFileId:   make(map[string]uint32),
 		heapFileCounter: 1,
 		tableSchemas:    make(map[string]types.TableSchema),
@@ -92,6 +97,63 @@ func (vm *VM) Execute(instructions []Instruction) error {
 
 		case OP_SELECT:
 			return vm.ExecuteSelect(instr.Value)
+
+			//  TRANSACTIONS (NEW)
+		case OP_TXN_BEGIN:
+			vm.currentTxn = vm.TxnManager.Begin()
+
+			op := &types.Operation{
+				Type:  types.OpTxnBegin,
+				TxnID: vm.currentTxn.ID,
+			}
+			_, err := vm.WalManager.AppendOperation(op)
+			if err != nil {
+				return err
+			}
+			if err := vm.WalManager.Sync(); err != nil {
+				return err
+			}
+			return nil
+
+		case OP_TXN_COMMIT:
+			if vm.currentTxn == nil {
+				return fmt.Errorf("no active transaction")
+			}
+
+			op := &types.Operation{
+				Type:  types.OpTxnCommit,
+				TxnID: vm.currentTxn.ID,
+			}
+			_, err := vm.WalManager.AppendOperation(op)
+			if err != nil {
+				return err
+			}
+			if err := vm.WalManager.Sync(); err != nil {
+				return err
+			}
+
+			vm.currentTxn = nil
+			return nil
+
+		case OP_TXN_ROLLBACK:
+			if vm.currentTxn == nil {
+				return fmt.Errorf("no active transaction")
+			}
+
+			op := &types.Operation{
+				Type:  types.OpTxnAbort,
+				TxnID: vm.currentTxn.ID,
+			}
+			_, err := vm.WalManager.AppendOperation(op)
+			if err != nil {
+				return err
+			}
+			if err := vm.WalManager.Sync(); err != nil {
+				return err
+			}
+
+			vm.currentTxn = nil
+			return nil
 
 		case OP_END:
 			return nil
@@ -458,30 +520,39 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 	// fmt.Print("file Id: ", fileID)
 	// fmt.Print("row:  ", string(row))
 
-	// =============== WRITING TO WAL ===============
+	// ================= TRANSACTION-AWARE WAL INSERT =================
 
+	// If no active transaction, auto-begin one
+	if vm.currentTxn == nil {
+		vm.currentTxn = vm.TxnManager.Begin()
+	}
+
+	// WAL FIRST (logical insert)
 	op := &types.Operation{
 		Type:    types.OpInsert,
+		TxnID:   vm.currentTxn.ID,
 		Table:   tableName,
 		RowData: row,
 	}
-	// fmt.Printf("Created an Insert Opertion for WAL %+v", op)
 
 	_, err = vm.WalManager.AppendOperation(op)
 	if err != nil {
 		return fmt.Errorf("wal append failed: %w", err)
 	}
 
-	// WAL is fsynced before applying changes
+	// WAL must be durable BEFORE applying changes
 	if err := vm.WalManager.Sync(); err != nil {
 		return fmt.Errorf("wal sync failed: %w", err)
 	}
 
+	// THEN apply change to heap
 	rowPtr, err := vm.heapfileManager.InsertRow(fileID, row)
 	if err != nil {
 		return fmt.Errorf("heap insert failed: %w", err)
 	}
 
+	//  Attach RowPointer to WAL entry (FOR RECOVERY UNDO)
+	op.RowPtr = rowPtr
 	// fmt.Printf("Inserted into heap (File:%d, Page:%d)\n", rowPtr.FileID, rowPtr.PageNumber)
 
 	/*
@@ -493,6 +564,18 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 	primaryKeyBytes, _, err := vm.ExtractPrimaryKey(schema, values, rowPtr)
 	if err != nil {
 		return fmt.Errorf("failed to extract primary key: %w", err)
+	}
+
+	// ================= Logical UNDO tracking =================
+	if vm.currentTxn != nil {
+		vm.currentTxn.InsertedRows = append(
+			vm.currentTxn.InsertedRows,
+			InsertedRow{
+				Table:      tableName,
+				RowPtr:     *rowPtr,
+				PrimaryKey: primaryKeyBytes,
+			},
+		)
 	}
 
 	rowPtrBytes := vm.SerializeRowPointer(rowPtr)
