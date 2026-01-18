@@ -81,3 +81,17 @@ func (hfm *HeapFileManager) CloseAll() error {
 
 	return lastErr
 }
+
+// DeleteRow tombstones a row using its RowPointer.
+// After this, GetRow(ptr) should return "invalid slot".
+func (hfm *HeapFileManager) DeleteRow(ptr *RowPointer) error {
+	hfm.mu.RLock()
+	heapFile, exists := hfm.files[ptr.FileID]
+	hfm.mu.RUnlock()
+
+	if !exists {
+		return fmt.Errorf("heap file %d not found", ptr.FileID)
+	}
+
+	return heapFile.deleteRow(ptr)
+}

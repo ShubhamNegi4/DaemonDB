@@ -1,7 +1,14 @@
 package bplus
 
 func (t *BPlusTree) Delete(key []byte) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
 	t.deleteRecursive(t.root, key)
+
+	// Persist dirty nodes so delete is durable
+	_ = t.cache.Flush()
+	_ = t.pager.Sync()
 }
 
 func (t *BPlusTree) deleteRecursive(nodeId int64, key []byte) bool {

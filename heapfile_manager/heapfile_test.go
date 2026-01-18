@@ -299,3 +299,40 @@ func TestAll(t *testing.T) {
 	fmt.Println("All tests completed!")
 	fmt.Println("========================================")
 }
+
+func TestDeleteRow(t *testing.T) {
+	testDir := "./test_delete"
+	os.MkdirAll(testDir, 0755)
+	defer os.RemoveAll(testDir)
+
+	hfm, err := NewHeapFileManager(testDir)
+	if err != nil {
+		t.Fatalf("Failed to create heap file manager: %v", err)
+	}
+
+	tableName := "students"
+	fileID := uint32(1)
+	if err := hfm.CreateHeapfile(tableName, fileID); err != nil {
+		t.Fatalf("Failed to create heap file: %v", err)
+	}
+
+	ptr, err := hfm.InsertRow(fileID, []byte("Alice|20|A"))
+	if err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+
+	// sanity: row exists
+	if _, err := hfm.GetRow(ptr); err != nil {
+		t.Fatalf("GetRow failed before delete: %v", err)
+	}
+
+	// delete
+	if err := hfm.DeleteRow(ptr); err != nil {
+		t.Fatalf("DeleteRow failed: %v", err)
+	}
+
+	// now must fail
+	if _, err := hfm.GetRow(ptr); err == nil {
+		t.Fatalf("expected GetRow to fail after delete, but it succeeded")
+	}
+}

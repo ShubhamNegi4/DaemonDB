@@ -190,3 +190,56 @@ func (hf *HeapFile) GetAllRowPointers() []*RowPointer {
 
 	return result
 }
+
+// deleteRow tombstones a row by zeroing its slot (Offset=0, Length=0).
+// This is enough because GetRow() treats (0,0) as invalid.
+func (hf *HeapFile) deleteRow(ptr *RowPointer) error {
+	hf.mu.Lock()
+	defer hf.mu.Unlock()
+
+	// Read the page
+	page, err := hf.readPage(ptr.PageNumber)
+	if err != nil {
+		return fmt.Errorf("failed to read page %d: %w", ptr.PageNumber, err)
+	}
+
+	// Validate slot index using header
+	header := readPageHeader(page)
+	if header == nil {
+		return fmt.Errorf("failed to read page header for page %d", ptr.PageNumber)
+	}
+	if ptr.SlotIndex >= header.SlotCount {
+		return fmt.Errorf("invalid slot index %d (slotCount=%d)", ptr.SlotIndex, header.SlotCount)
+	}
+
+	// Read slot
+	slot := readSlot(page, ptr.SlotIndex)
+	if slot == nil {
+		return fmt.Errorf("invalid slot at index %d", ptr.SlotIndex)
+	}
+
+	// Already deleted => idempotent
+	if slot.Offset == 0 || slot.Length == 0 {
+		return nil
+	}
+
+	// Tombstone
+	slot.Offset = 0
+	slot.Length = 0
+	writeSlot(page, ptr.SlotIndex, slot)
+
+	// Best-effort header bookkeeping (optional but nice)
+	if header.NumRows > 0 {
+		header.NumRows--
+	}
+	header.IsPageFull = 0
+	header.NumRowsFree = calculateFreeSpace(header)
+	writePageHeader(page, header)
+
+	// Persist
+	if err := hf.writePage(ptr.PageNumber, page); err != nil {
+		return fmt.Errorf("failed to write page %d: %w", ptr.PageNumber, err)
+	}
+
+	return nil
+}

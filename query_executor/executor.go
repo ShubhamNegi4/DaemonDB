@@ -140,18 +140,39 @@ func (vm *VM) Execute(instructions []Instruction) error {
 				return fmt.Errorf("no active transaction")
 			}
 
+			// 1) Log txn abort (same as before)
 			op := &types.Operation{
 				Type:  types.OpTxnAbort,
 				TxnID: vm.currentTxn.ID,
 			}
-			_, err := vm.WalManager.AppendOperation(op)
-			if err != nil {
+			if _, err := vm.WalManager.AppendOperation(op); err != nil {
 				return err
 			}
 			if err := vm.WalManager.Sync(); err != nil {
 				return err
 			}
 
+			// 2) Runtime UNDO: undo inserted rows in reverse order
+			for i := len(vm.currentTxn.InsertedRows) - 1; i >= 0; i-- {
+				ins := vm.currentTxn.InsertedRows[i]
+
+				// (a) delete from heapfile
+				rp := ins.RowPtr
+				if err := vm.heapfileManager.DeleteRow(&rp); err != nil {
+					return fmt.Errorf("rollback heap delete failed (table=%s file=%d page=%d slot=%d): %w",
+						ins.Table, rp.FileID, rp.PageNumber, rp.SlotIndex, err)
+				}
+
+				// (b) delete from primary index
+				btree, err := vm.GetOrCreateIndex(ins.Table)
+				if err != nil {
+					return fmt.Errorf("rollback index open failed (table=%s): %w", ins.Table, err)
+				}
+				btree.Delete(ins.PrimaryKey) // Phase 2 made this durable
+			}
+
+			// 3) mark txn aborted + clear active txn
+			vm.currentTxn.State = TxnAborted
 			vm.currentTxn = nil
 			return nil
 
