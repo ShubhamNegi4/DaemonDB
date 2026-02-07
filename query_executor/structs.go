@@ -5,6 +5,7 @@ import (
 	heapfile "DaemonDB/heapfile_manager"
 	"DaemonDB/types"
 	"DaemonDB/wal_manager"
+	"sync"
 )
 
 const DB_ROOT = "./databases" // all databases stored here
@@ -42,16 +43,19 @@ type VM struct {
 	WalManager      *wal_manager.WALManager
 	heapfileManager *heapfile.HeapFileManager
 
-	// 🔹 TRANSACTIONS (NEW)
 	TxnManager *TxnManager
 	currentTxn *Transaction
 
-	// existing fields
 	stack           [][]byte
 	currDb          string
 	tableToFileId   map[string]uint32 // table name to heap file id
-	heapFileCounter uint32            // for current db, whats the heap file counter
+	heapFileCounter uint32
 	tableSchemas    map[string]types.TableSchema
+
+	// Per-table B+ tree index cache (avoids reopening the same .idx file).
+	// Cleared and closed when switching DB or on VM shutdown.
+	indexCacheMu   sync.RWMutex
+	tableIndexCache map[string]*bplus.BPlusTree
 }
 
 type SelectPayload struct {

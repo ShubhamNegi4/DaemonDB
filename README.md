@@ -4,7 +4,7 @@
 
 <h1 align="center">DaemonDB: Lightweight Relational Database Engine</h1>
 
-DaemonDB is a lightweight relational database engine built from scratch in Go. It implements core database concepts including B+ tree indexing, heap file storage, SQL parsing, and query execution, designed for educational purposes and learning database internals.
+DaemonDB is a lightweight relational database engine built from scratch in Go. It implements core database concepts including B+ tree indexing, heap file storage, SQL parsing, a bytecode executor, WAL-based durability, and basic transaction support. The project is designed for education: every subsystem is small enough to read, yet complete enough to show the real mechanics.
 
 ## Overview
 
@@ -43,12 +43,13 @@ The database follows a layered architecture separating storage, indexing, and qu
 
 ### Component Overview
 
-- **Query Parser**: Lexical analysis and syntax parsing of SQL statements
-- **Code Generator**: Converts AST to bytecode instructions
-- **Query Executor (VM)**: Executes bytecode, orchestrates B+ tree and heap file operations
-- **B+ Tree**: Index structure mapping primary keys to row locations
-- **Heap File Manager**: Manages row storage in page-based heap files
-- **Pager**: Abstract interface for page-level I/O (currently in-memory)
+- **Query Parser**: Hand-written lexer and recursive-descent parser that builds AST for DDL/DML (+ joins and transactions)
+- **Code Generator**: Emits compact bytecode instructions (stack-based, VDBE-style)
+- **Query Executor (VM)**: Executes bytecode, orchestrates B+ tree, heap files, and WAL
+- **B+ Tree**: Primary index mapping keys → row pointers with disk pager + buffer pool
+- **Heap File Manager**: Page + slot–based heap files for row storage
+- **Pager Layer**: Abstracts page I/O (in-memory & on-disk implementations)
+- **WAL + Txn Manager**: Write-ahead logging with BEGIN/COMMIT/ROLLBACK and crash replay
 
 ## B+ Tree Implementation
 
@@ -92,25 +93,30 @@ for iter.Valid() {
 ### Implementation Details
 
 **Completed Features:**
-- ✅ Leaf node insertion with splitting
-- ✅ Internal node splitting with parent propagation
-- ✅ Recursive parent updates (handles multi-level splits)
-- ✅ Delete operations with borrow/merge logic
-- ✅ Binary search optimization for key lookups
-- ✅ Range scan iterator (SeekGE, Next)
-- ✅ Thread-safe operations with reader-writer locks
+- ✅ Leaf/internal splits with parent propagation
+- ✅ Borrow/merge delete logic and root collapse
+- ✅ Binary search inside nodes; linked leaves for range scans
+- ✅ On-disk pager with 4KB pages + persisted root (page 0 metadata)
+- ✅ LRU buffer pool with pin/unpin + dirty tracking
+- ✅ Node serialization (`encodeNode`/`decodeNode`)
+- ✅ Iterator for SeekGE/Next range scans
+- ✅ Thread-safe with RW locks
+
+**Known debt:** Some tree paths access `cache.pages[id]` directly instead of `Get/Put/MarkDirty`, which bypasses LRU + disk loads; see `bplustree/README.md` for the recommended refactor.
 
 **File Structure:**
 - `struct.go`: Node and tree data structures
+- `new_bplus_tree.go`: Constructs tree, loads persisted root
 - `insertion.go`: Insert operations
-- `split_leaf.go`: Leaf node splitting
-- `split_internal.go`: Internal node splitting
-- `parent_insert.go`: Parent propagation logic
+- `split_leaf.go` / `split_internal.go` / `parent_insert.go`: Split + propagation
 - `deletion.go`: Delete with borrow/merge
 - `search.go`: Point lookup
 - `iterator.go`: Range scan operations
-- `find_leaf.go`: Leaf node navigation
+- `find_leaf.go`: Leaf navigation
 - `binary_search.go`: Binary search utilities
+- `inmemory_pager.go` / `disk_pager.go`: Pager implementations
+- `buffer_pool.go`: LRU cache with pin/unpin & flush
+- `node_codec.go`: Node serialization
 
 ## Heap File System
 
@@ -158,20 +164,20 @@ rowData, _ := hfm.GetRow(rowPtr)
 ### Implementation Details
 
 **Completed Features:**
-- ✅ Page-based storage (4KB pages)
-- ✅ Slot directory for O(1) row lookup within pages
-- ✅ Automatic page creation when pages fill up
-- ✅ Row insertion with space management
-- ✅ Row retrieval using RowPointer
+- ✅ Page-based storage (4KB pages, 32B headers)
+- ✅ Slot directory (offset+length) for O(1) row access
+- ✅ Automatic page allocation + header bookkeeping
+- ✅ Row insertion, GetRow, tombstone DeleteRow (slot zeroed)
+- ✅ Full-table scan via `GetAllRowPointers`
 - ✅ Thread-safe file operations
 
 **File Structure:**
 - `struct.go`: PageHeader, Slot, RowPointer, HeapFile structures
-- `heapfile.go`: HeapFile operations (insertRow, GetRow, findSuitablePage)
-- `heapfile_manager.go`: HeapFileManager (CreateHeapfile, InsertRow, GetRow)
-- `page_io.go`: Low-level page read/write operations
-- `page_header.go`: Header serialization/deserialization
-- `slots.go`: Slot directory operations (readSlot, writeSlot, addSlot)
+- `helpers.go`: InsertRow, GetRow, DeleteRow, LoadHeapFile, mapping helpers
+- `heapfile_pager.go`: Pager + page allocation, sync/close
+- `slots.go`: Slot directory helpers
+- `page_header_io.go`: Header serialization/deserialization
+- `heapfile_manager.go`: Manager for per-table heap files
 
 **Architecture:**
 - 1 Table = 1 HeapFile (one `.heap` file per table)
@@ -236,9 +242,9 @@ DROP students
 ### Parser Architecture
 
 - **Lexer**: Hand-written tokenizer for SQL keywords, identifiers, literals
-- **Parser**: Recursive descent parser for syntax analysis
-- **AST**: Abstract syntax tree generation for each statement type
-- **Code Generator**: Converts AST to bytecode instructions
+- **Parser**: Recursive descent parser (supports joins, WHERE on PK, transactions)
+- **AST**: Abstract syntax tree per statement
+- **Code Generator**: Emits stack-based bytecode for the VM
 
 **File Structure:**
 - `lexer/lexer.go`: Tokenization implementation
@@ -269,21 +275,30 @@ VM.Execute()
 ### Current Implementation
 
 **Completed:**
-- ✅ CREATE TABLE execution
-- ✅ INSERT execution (writes to heap file + indexes in B+ tree)
-- ✅ Bytecode instruction set (OP_PUSH_VAL, OP_INSERT, OP_SELECT, etc.)
+- ✅ CREATE DATABASE / SHOW DATABASES / USE
+- ✅ CREATE TABLE (with foreign keys validation)
+- ✅ INSERT (heap write + primary index write)
+- ✅ SELECT:
+  - Full table scan
+  - PK index lookup when WHERE targets primary key
+  - Sort-merge joins (INNER/LEFT/RIGHT/FULL) with optional WHERE filter
+- ✅ Bytecode instruction set (stack-based VM)
 - ✅ Row serialization/deserialization
-- ✅ Primary key extraction
+- ✅ Primary key extraction (explicit PK or implicit rowid)
 - ✅ RowPointer serialization
+- ✅ Transaction opcodes (BEGIN/COMMIT/ROLLBACK) with logical undo of inserts
+- ✅ WAL append + fsync before data/index writes; crash recovery replays committed ops
 
-**In Progress:**
-- 🚧 SELECT execution (parser complete, executor TODO)
-- 🚧 UPDATE execution (parser complete, executor TODO)
-- 🚧 DELETE execution (parser complete, executor TODO)
+**Pending/Partial:**
+- 🚧 UPDATE/DELETE execution (parser exists, executor not implemented)
+- 🚧 Secondary indexes and non-PK predicates
 
 **File Structure:**
 - `executor.go`: VM implementation and statement execution
-- `helpers.go`: Serialization utilities, table schema management
+- `helpers.go`: Serialization, table schema management, joins, index helpers
+- `structs.go`: Opcodes, VM struct, payloads
+- `txn_manager.go`: Transaction bookkeeping
+- `wal_replay.go`: Crash recovery and replay
 
 ## Project Structure
 
@@ -420,6 +435,14 @@ go run bplus.go
    e. Return result to user (SELECT without WHERE still does a full scan)
 ```
 
+## Transactions & WAL
+
+- **WAL format**: Fixed-size records with LSN, length, CRC + JSON-encoded operation payloads
+- **Segmented log**: 16MB segments (`wal_XXXXXXXXXXXX.log`)
+- **Durability path**: Append log → fsync → apply to heap/index
+- **Recovery**: Two-pass replay (collect committed txn IDs, then reapply committed CREATE TABLE / INSERT)
+- **Rollback**: Logical undo of inserted rows (heap tombstone + index delete)
+
 ## Performance Characteristics
 
 - **B+ Tree Search**: O(log n) for point lookups
@@ -428,38 +451,36 @@ go run bplus.go
 - **Heap File Read**: O(1) using slot directory
 - **Page Size**: 4KB (disk-aligned)
 - **Node Capacity**: 32 keys per node
-- **Concurrency**: Reader-writer locks for optimal read performance
+- **Concurrency**: Reader-writer locks on tree nodes
+- **Buffer Pool**: LRU with pin/unpin to protect pages during operations
 
 ## Technical Specifications
 
 - **Language**: Go 1.19+
 - **Storage**: Heap files on disk (4KB pages)
-- **Indexing**: B+ tree (currently in-memory, disk persistence planned)
-- **Query Language**: SQL with DDL/DML support
+- **Indexing**: B+ tree with on-disk pager + buffer pool
+- **Query Language**: SQL with DDL/DML, joins, PK-based WHERE
+- **Transactions**: BEGIN/COMMIT/ROLLBACK, WAL-backed durability
 - **Concurrency**: Thread-safe with mutex locks
 - **Architecture**: Index-organized (B+ tree points to heap file rows)
 
 ## Testing
 
-The project includes comprehensive tests:
-
 ```bash
-# Test heap file system
-cd heapfile_manager
-go test -v
+# Heap file system tests
+cd heapfile_manager && go test -v
 
-# Test specific functionality
-go test -v -run TestHeapFileOperations
-go test -v -run TestMultiplePages
-go test -v -run TestSlotDirectory
+# B+ tree demo (interactive)
+cd bplustree && go run bplus.go
 ```
 
 ## Future Work
 
-- [ ] Implement UPDATE/DELETE operations in heap files
-- [ ] Add secondary indexes and non-PK WHERE filtering
-- [ ] Add transaction support
-- [ ] Implement WAL (Write-Ahead Logging) for durability
+- [ ] Executor support for UPDATE/DELETE
+- [ ] Fix direct cache access paths in B+ tree to use BufferPool API
+- [ ] Secondary indexes and non-PK predicates
+- [ ] Garbage collection / compaction for tombstoned rows
+- [ ] Background checkpointing of WAL segments
 
 ## License
 

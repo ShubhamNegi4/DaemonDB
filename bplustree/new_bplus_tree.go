@@ -28,3 +28,12 @@ func (t *BPlusTree) saveRoot() {
 	binary.LittleEndian.PutUint64(buf[0:8], uint64(t.root))
 	_ = t.pager.WritePage(0, buf)
 }
+
+// Close flushes dirty nodes to disk and closes the pager (releases the file handle).
+// Call this when switching database or on VM shutdown to avoid leaking file descriptors.
+func (t *BPlusTree) Close() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	_ = t.cache.Flush()
+	return t.pager.Close()
+}
