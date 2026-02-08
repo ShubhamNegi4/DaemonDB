@@ -100,4 +100,6 @@ func main() {
 	fmt.Println("  - Schemas:                ", baseDir+"/tables/*_schema.json")
 	fmt.Println("  - Primary key indexes:    ", baseDir+"/indexes/*.idx")
 	fmt.Println("  - Table-file mapping:     ", baseDir+"/table_file_mapping.json")
+	fmt.Println("\n  To dump a B+ tree index file:")
+	fmt.Println("    go run ./cmd/inspect_idx", baseDir+"/indexes/students_primary.idx")
 }
