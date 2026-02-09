@@ -118,7 +118,8 @@ func formatKey(b []byte) string {
 	return fmt.Sprintf("%q", string(b))
 }
 
-// formatRowPointer formats 10-byte value as (FileID, PageNum, Slot).
+// formatRowPointer formats 10-byte value as (FileID, PageNum, Slot) and raw hex.
+// Row pointer layout: FileID uint32 LE (4B) | PageNumber uint32 LE (4B) | SlotIndex uint16 LE (2B) = 10 bytes.
 func formatRowPointer(b []byte) string {
 	if len(b) < 10 {
 		return fmt.Sprintf("<%d bytes>", len(b))
@@ -126,5 +127,7 @@ func formatRowPointer(b []byte) string {
 	fileID := binary.LittleEndian.Uint32(b[0:4])
 	pageNum := binary.LittleEndian.Uint32(b[4:8])
 	slot := binary.LittleEndian.Uint16(b[8:10])
-	return fmt.Sprintf("(file=%d page=%d slot=%d)", fileID, pageNum, slot)
+	hexStr := fmt.Sprintf("%02x %02x %02x %02x %02x %02x %02x %02x %02x %02x",
+		b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9])
+	return fmt.Sprintf("(file=%d page=%d slot=%d) [%s]", fileID, pageNum, slot, hexStr)
 }

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-func (p *Parser) parseSelect() *SelectStmt {
+func (p *Parser) parseSelect() (*SelectStmt, error) {
 	p.nextToken()
 
 	cols := []string{}
@@ -24,7 +24,9 @@ func (p *Parser) parseSelect() *SelectStmt {
 		}
 	}
 
-	p.expect(lex.FROM)
+	if err := p.expect(lex.FROM); err != nil {
+		return nil, err
+	}
 	p.nextToken()
 	table := p.curToken.Value
 	p.nextToken()
@@ -39,14 +41,20 @@ func (p *Parser) parseSelect() *SelectStmt {
 		p.curToken.Value == "INNER"
 
 	if isJoin {
-		joinTable, joinType, leftCol, rightCol = p.parseJoin()
+		var err error
+		joinTable, joinType, leftCol, rightCol, err = p.parseJoin()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var whereCol, whereVal string
 	if p.curToken.Kind == lex.WHERE {
 		p.nextToken()
 		whereCol = p.parseQualifiedIdentifier()
-		p.expect(lex.EQUAL)
+		if err := p.expect(lex.EQUAL); err != nil {
+			return nil, err
+		}
 		p.nextToken()
 		whereVal = p.curToken.Value
 		p.nextToken()
@@ -61,31 +69,37 @@ func (p *Parser) parseSelect() *SelectStmt {
 		JoinType:   joinType,
 		LeftCol:    leftCol,
 		Rightcol:   rightCol,
-	}
+	}, nil
 }
 
-func (p *Parser) parseJoin() (joinTable, joinType, leftCol, rightCol string) {
+func (p *Parser) parseJoin() (joinTable, joinType, leftCol, rightCol string, err error) {
 	joinType = ""
 	if p.curToken.Kind == lex.INNER || p.curToken.Kind == lex.LEFT || p.curToken.Kind == lex.RIGHT || p.curToken.Kind == lex.FULL {
 		joinType = p.curToken.Value
 		p.nextToken()
 	}
 
-	p.expect(lex.JOIN)
+	if err = p.expect(lex.JOIN); err != nil {
+		return "", "", "", "", err
+	}
 	p.nextToken()
 
 	joinTable = strings.TrimSpace(p.curToken.Value)
 	p.nextToken()
 
-	p.expect(lex.ON)
+	if err = p.expect(lex.ON); err != nil {
+		return "", "", "", "", err
+	}
 	p.nextToken()
 
 	leftCol = p.parseQualifiedIdentifier()
-	p.expect(lex.EQUAL)
+	if err = p.expect(lex.EQUAL); err != nil {
+		return "", "", "", "", err
+	}
 	p.nextToken()
 	rightCol = p.parseQualifiedIdentifier()
 
-	return joinTable, joinType, leftCol, rightCol
+	return joinTable, joinType, leftCol, rightCol, nil
 }
 
 func (p *Parser) parseQualifiedIdentifier() string {

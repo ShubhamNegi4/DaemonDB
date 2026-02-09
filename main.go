@@ -85,14 +85,22 @@ func main() {
 		l := lex.New(query)
 		p := parser.New(l)
 
-		stmt := p.ParseStatement()
+		stmt, err := p.ParseStatement()
+		if err != nil {
+			fmt.Printf("Parse error: %v\n", err)
+			continue
+		}
 
 		fmt.Println("\n=== AST ===")
 		fmt.Printf("%#v", stmt)
 
 		fmt.Println("\n\n=== Bytecode ===")
 
-		instructions := codegen.EmitBytecode(stmt)
+		instructions, err := codegen.EmitBytecode(stmt)
+		if err != nil {
+			fmt.Printf("Codegen error: %v\n", err)
+			continue
+		}
 		for i, instr := range instructions {
 			fmt.Printf("%d: OP=%v, VALUE=%v\n", i, instr.Op, instr.Value)
 		}

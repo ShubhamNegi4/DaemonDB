@@ -2,24 +2,27 @@ package parser
 
 import (
 	lex "DaemonDB/query_parser/lexer"
+	"fmt"
 	"strings"
 )
 
-func (p *Parser) parseInsert() *InsertStmt {
+func (p *Parser) parseInsert() (*InsertStmt, error) {
 	p.nextToken()
-	p.expect(lex.INTO)
+	if err := p.expect(lex.INTO); err != nil {
+		return nil, err
+	}
 	p.nextToken()
 
 	table := p.curToken.Value
 	p.nextToken()
 
 	if strings.ToUpper(p.curToken.Value) != "VALUES" {
-		panic("expected VALUES")
+		return nil, ErrExpectedValues
 	}
 	p.nextToken()
 
 	if p.curToken.Kind != lex.OPENROUNDED {
-		panic("expected (")
+		return nil, ErrExpectedParen
 	}
 	p.nextToken()
 
@@ -32,7 +35,7 @@ func (p *Parser) parseInsert() *InsertStmt {
 		case lex.COMMA:
 			p.nextToken()
 		default:
-			panic("unexpected token in values list")
+			return nil, fmt.Errorf("%w: got %s (%s)", ErrUnexpectedTokenInValues, p.curToken.Kind, p.curToken.Value)
 		}
 	}
 
@@ -40,29 +43,33 @@ func (p *Parser) parseInsert() *InsertStmt {
 		p.nextToken()
 	}
 
-	return &InsertStmt{Table: table, Values: values}
+	return &InsertStmt{Table: table, Values: values}, nil
 }
 
-func (p *Parser) parseDrop() *DropStmt {
+func (p *Parser) parseDrop() (*DropStmt, error) {
 	p.nextToken()
 	table := p.curToken.Value
 	p.nextToken()
-	return &DropStmt{Table: table}
+	return &DropStmt{Table: table}, nil
 }
 
-func (p *Parser) parseUpdate() *UpdateStmt {
+func (p *Parser) parseUpdate() (*UpdateStmt, error) {
 	p.nextToken()
 	table := p.curToken.Value
 	p.nextToken()
 
-	p.expect(lex.SET)
+	if err := p.expect(lex.SET); err != nil {
+		return nil, err
+	}
 	p.nextToken()
 
 	assignments := map[string]string{}
 	for p.curToken.Kind == lex.IDENT {
 		col := p.curToken.Value
 		p.nextToken()
-		p.expect(lex.EQUAL)
+		if err := p.expect(lex.EQUAL); err != nil {
+			return nil, err
+		}
 		p.nextToken()
 		val := p.curToken.Value
 		assignments[col] = val
@@ -73,5 +80,5 @@ func (p *Parser) parseUpdate() *UpdateStmt {
 			break
 		}
 	}
-	return &UpdateStmt{Table: table, Assignments: assignments}
+	return &UpdateStmt{Table: table, Assignments: assignments}, nil
 }

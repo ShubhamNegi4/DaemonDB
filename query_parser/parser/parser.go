@@ -2,6 +2,7 @@ package parser
 
 import (
 	lex "DaemonDB/query_parser/lexer"
+	"errors"
 	"fmt"
 )
 
@@ -23,27 +24,29 @@ func (p *Parser) nextToken() {
 	p.peekToken = p.l.NextToken()
 }
 
-func (p *Parser) expect(kind lex.TokenKind) {
+// expect returns an error if the current token is not of the expected kind (replaces panic).
+func (p *Parser) expect(kind lex.TokenKind) error {
 	if p.curToken.Kind != kind {
-		panic(fmt.Sprintf("expected %s, got %s (%s)", kind, p.curToken.Kind, p.curToken.Value))
+		return fmt.Errorf("expected %s, got %s (%s)", kind, p.curToken.Kind, p.curToken.Value)
 	}
+	return nil
 }
 
-// ParseStatement is the entry point; dispatches to parse_ddl, parse_dml, parse_select.
-func (p *Parser) ParseStatement() Statement {
+// ParseStatement is the entry point; returns (nil, error) on parse error instead of panicking.
+func (p *Parser) ParseStatement() (Statement, error) {
 	switch p.curToken.Kind {
 
 	case lex.BEGIN:
 		p.nextToken()
-		return &BeginTxnStmt{}
+		return &BeginTxnStmt{}, nil
 
 	case lex.COMMIT:
 		p.nextToken()
-		return &CommitTxnStmt{}
+		return &CommitTxnStmt{}, nil
 
 	case lex.ROLLBACK:
 		p.nextToken()
-		return &RollbackTxnStmt{}
+		return &RollbackTxnStmt{}, nil
 
 	case lex.SHOW:
 		return p.parseShowDatabases()
@@ -69,5 +72,14 @@ func (p *Parser) ParseStatement() Statement {
 		}
 	}
 
-	panic(fmt.Sprintf("unexpected token: %s (%s)", p.curToken.Kind, p.curToken.Value))
+	return nil, fmt.Errorf("unexpected token: %s (%s)", p.curToken.Kind, p.curToken.Value)
 }
+
+var (
+	ErrExpectedDatabaseName = errors.New("expected database name after USE")
+	ErrExpectedKeyAfterForeign = errors.New("expected KEY after FOREIGN")
+	ErrExpectedReferences = errors.New("expected REFERENCES in foreign key")
+	ErrExpectedValues = errors.New("expected VALUES")
+	ErrExpectedParen = errors.New("expected (")
+	ErrUnexpectedTokenInValues = errors.New("unexpected token in values list")
+)

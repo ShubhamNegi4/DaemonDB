@@ -5,37 +5,41 @@ import (
 	"strings"
 )
 
-func (p *Parser) parseCreateDatabase() *CreateDatabaseStmt {
+func (p *Parser) parseCreateDatabase() (*CreateDatabaseStmt, error) {
 	p.nextToken()
 	dbName := p.curToken.Value
-	return &CreateDatabaseStmt{DbName: dbName}
+	return &CreateDatabaseStmt{DbName: dbName}, nil
 }
 
-func (p *Parser) parseShowDatabases() *ShowDatabasesStmt {
+func (p *Parser) parseShowDatabases() (*ShowDatabasesStmt, error) {
 	p.nextToken()
-	p.expect(lex.DATABASES)
-	return &ShowDatabasesStmt{}
+	if err := p.expect(lex.DATABASES); err != nil {
+		return nil, err
+	}
+	return &ShowDatabasesStmt{}, nil
 }
 
-func (p *Parser) parseUseDatabase() *UseDatabaseStatement {
+func (p *Parser) parseUseDatabase() (*UseDatabaseStatement, error) {
 	p.nextToken()
 
 	if p.curToken.Kind != lex.IDENT {
-		panic("expected database name after USE")
+		return nil, ErrExpectedDatabaseName
 	}
 
 	dbName := p.curToken.Value
 	p.nextToken()
 
-	return &UseDatabaseStatement{DbName: dbName}
+	return &UseDatabaseStatement{DbName: dbName}, nil
 }
 
-func (p *Parser) parseCreateTable() *CreateTableStmt {
+func (p *Parser) parseCreateTable() (*CreateTableStmt, error) {
 	p.nextToken()
 	table := p.curToken.Value
 	p.nextToken()
 
-	p.expect(lex.OPENROUNDED)
+	if err := p.expect(lex.OPENROUNDED); err != nil {
+		return nil, err
+	}
 	p.nextToken()
 
 	cols := []ColumnDef{}
@@ -50,38 +54,52 @@ func (p *Parser) parseCreateTable() *CreateTableStmt {
 
 			if !(p.curToken.Kind == lex.IDENT &&
 				strings.EqualFold(p.curToken.Value, "key")) {
-				panic("expected KEY after FOREIGN")
+				return nil, ErrExpectedKeyAfterForeign
 			}
 			p.nextToken()
 
-			p.expect(lex.OPENROUNDED)
+			if err := p.expect(lex.OPENROUNDED); err != nil {
+				return nil, err
+			}
 			p.nextToken()
 
 			fkColumn := p.curToken.Value
-			p.expect(lex.IDENT)
+			if err := p.expect(lex.IDENT); err != nil {
+				return nil, err
+			}
 			p.nextToken()
 
-			p.expect(lex.CLOSEDROUNDED)
+			if err := p.expect(lex.CLOSEDROUNDED); err != nil {
+				return nil, err
+			}
 			p.nextToken()
 
 			if !(p.curToken.Kind == lex.IDENT &&
 				strings.EqualFold(p.curToken.Value, "references")) {
-				panic("expected REFERENCES in foreign key")
+				return nil, ErrExpectedReferences
 			}
 			p.nextToken()
 
 			refTable := p.curToken.Value
-			p.expect(lex.IDENT)
+			if err := p.expect(lex.IDENT); err != nil {
+				return nil, err
+			}
 			p.nextToken()
 
-			p.expect(lex.OPENROUNDED)
+			if err := p.expect(lex.OPENROUNDED); err != nil {
+				return nil, err
+			}
 			p.nextToken()
 
 			refColumn := p.curToken.Value
-			p.expect(lex.IDENT)
+			if err := p.expect(lex.IDENT); err != nil {
+				return nil, err
+			}
 			p.nextToken()
 
-			p.expect(lex.CLOSEDROUNDED)
+			if err := p.expect(lex.CLOSEDROUNDED); err != nil {
+				return nil, err
+			}
 			p.nextToken()
 
 			fks = append(fks, ForeignKeyDef{
@@ -97,11 +115,15 @@ func (p *Parser) parseCreateTable() *CreateTableStmt {
 		}
 
 		name := p.curToken.Value
-		p.expect(lex.IDENT)
+		if err := p.expect(lex.IDENT); err != nil {
+			return nil, err
+		}
 		p.nextToken()
 
 		typ := p.curToken.Value
-		p.expect(lex.IDENT)
+		if err := p.expect(lex.IDENT); err != nil {
+			return nil, err
+		}
 		p.nextToken()
 
 		isPK := false
@@ -127,12 +149,14 @@ func (p *Parser) parseCreateTable() *CreateTableStmt {
 		}
 	}
 
-	p.expect(lex.CLOSEDROUNDED)
+	if err := p.expect(lex.CLOSEDROUNDED); err != nil {
+		return nil, err
+	}
 	p.nextToken()
 
 	return &CreateTableStmt{
 		TableName:   table,
 		Columns:     cols,
 		ForeignKeys: fks,
-	}
+	}, nil
 }
