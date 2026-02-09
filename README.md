@@ -190,14 +190,11 @@ A complete SQL processing pipeline from lexical analysis to AST generation.
 
 ### Supported Statements
 
+**Note:** Invalid SQL returns a parse or codegen error (no panics). See `cmd/PARSER_PANIC_TRIGGERS.md` for correct syntax and common mistakes.
+
 ```sql
--- Table creation
-CREATE TABLE students {
-    id int,
-    name string,
-    age int,
-    grade string
-}
+-- Table creation (use parentheses, not braces)
+CREATE TABLE students ( id int primary key, name string, age int, grade string )
 
 -- Data insertion
 INSERT INTO students VALUES ("S001", "Alice", 20, "A")
@@ -207,8 +204,8 @@ INSERT INTO students VALUES ("S002", "Bob", 21, "B")
 SELECT * FROM students
 SELECT name, grade FROM students
 
--- Data updates
-UPDATE students SET grade = "A+" WHERE id = "S001"
+-- Data updates (parser accepts; executor not yet implemented)
+-- UPDATE students SET grade = "A+" WHERE id = "S001"
 
 -- Table Join
 -- JOIN by default does INNER JOIN
@@ -235,8 +232,8 @@ select * from table1 RIGHT JOIN table2 on id1 = id2
 select * from table1 FULL JOIN table2 on id1 = id2
 
 
--- Table management
-DROP students
+-- Table management (parser accepts; executor not yet implemented)
+-- DROP TABLE students
 ```
 
 ### Parser Architecture
@@ -294,11 +291,13 @@ VM.Execute()
 - 🚧 Secondary indexes and non-PK predicates
 
 **File Structure:**
-- `executor.go`: VM implementation and statement execution
-- `helpers.go`: Serialization, table schema management, joins, index helpers
+- `vm.go`: VM loop and opcode dispatch
+- `exec_create_db.go`, `exec_create_table.go`, `exec_insert.go`, `exec_select.go`: Statement execution
+- `serialization.go`, `table_mapping.go`, `joins.go`, `index.go`, `print.go`, `type_conv.go`: Helpers
 - `structs.go`: Opcodes, VM struct, payloads
 - `txn_manager.go`: Transaction bookkeeping
 - `wal_replay.go`: Crash recovery and replay
+- Per-table B+ tree index cache (closed on DB switch / VM shutdown)
 
 ## Project Structure
 
@@ -327,12 +326,11 @@ DaemonDB/
 │   └── heapfile_test.go         # Comprehensive tests
 ├── query_parser/                 # SQL parsing
 │   ├── lexer/                   # Lexical analysis
-│   ├── parser/                  # Syntax analysis
+│   ├── parser/                  # Syntax analysis (parser.go, parse_ddl.go, parse_dml.go, parse_select.go)
 │   └── code-generator/          # Bytecode generation
-├── query_executor/               # Query execution
-│   ├── executor.go              # VM and execution
-│   └── helpers.go               # Utilities
-├── main.go                       # Entry point
+├── query_executor/               # Query execution (vm.go, exec_*.go, helpers)
+├── cmd/                          # CLI tools (seed, inspect_idx, dump_sample)
+├── main.go                       # REPL entry point
 └── README.md                     # This file
 ```
 
@@ -344,14 +342,12 @@ DaemonDB/
 go run main.go
 ```
 
-Then enter SQL queries:
+Then enter SQL queries. Type `help` or `?` for supported commands.
+
 ```sql
-CREATE TABLE students {
-    id int primary key,
-    name string,
-    age int,
-    grade string
-}
+CREATE DATABASE demoDB
+USE demoDB
+CREATE TABLE students ( id string primary key, name string, age int, grade string )
 
 INSERT INTO students VALUES ("S001", "Alice", 20, "A")
 INSERT INTO students VALUES ("S002", "Bob", 21, "B")
@@ -388,8 +384,8 @@ go run bplus.go
 | **B+ Tree Iterator** | ✅ Complete | Range scan operations (SeekGE, Next) |
 | **Heap File Storage** | ✅ Complete | Page-based storage with slot directory |
 | **Heap File Operations** | ✅ Complete | Insert, GetRow (Delete/Update TODO) |
-| **SQL Parser** | ✅ Complete | Lexer and parser for DDL/DML |
-| **Code Generator** | ✅ Complete | AST to bytecode conversion |
+| **SQL Parser** | ✅ Complete | Lexer and parser for DDL/DML; errors instead of panics |
+| **Code Generator** | ✅ Complete | AST to bytecode conversion; returns error on unknown/marshal failure |
 | **Query Executor** | 🚧 Partial | INSERT/CREATE TABLE working, SELECT uses PK index; UPDATE/DELETE TODO |
 | **Concurrency** | ✅ Complete | Thread-safe operations |
 | **File Persistence** | 🚧 Partial | Heap files on disk, B+ tree index pages on disk (root persisted) |
@@ -467,8 +463,15 @@ go run bplus.go
 ## Testing
 
 ```bash
+# All packages
+go test ./...
+
 # Heap file system tests
 cd heapfile_manager && go test -v
+
+# Parser and codegen (error paths, no panics)
+cd query_parser/parser && go test -v
+cd query_parser/code-generator && go test -v
 
 # B+ tree demo (interactive)
 cd bplustree && go run bplus.go

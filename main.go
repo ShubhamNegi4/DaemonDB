@@ -10,10 +10,8 @@ import (
 	"DaemonDB/wal_manager"
 	"bufio"
 	"bytes"
-	"log"
-
-	// "bytes"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 )
@@ -38,6 +36,7 @@ func main() {
 	}
 
 	vm := executor.NewVM(tree, heapFileManager, walManager)
+	defer vm.CloseIndexCache()
 
 	if err := vm.RecoverAndReplayFromWAL(); err != nil {
 		walManager.Close()
@@ -60,26 +59,12 @@ func main() {
 		if line == "" {
 			continue
 		}
+		if line == "?" || strings.EqualFold(line, "help") {
+			printHelp()
+			continue
+		}
 
-		// user typed a single SQL query
 		query := line
-
-		/*
-			// printing tokens
-
-			l := lex.New(query)
-			tokens := []lex.Token{}
-			for {
-				tok := l.NextToken()
-				tokens = append(tokens, tok)
-				if tok.Kind == lex.END {
-					break
-				}
-			}
-			for i := range tokens {
-				fmt.Printf("kind: %s     value: %s\n", tokens[i].Kind, tokens[i].Value)
-			}
-		*/
 
 		// Lexer + Parser
 		l := lex.New(query)
@@ -107,7 +92,21 @@ func main() {
 
 		fmt.Println("\n=== Execution ===")
 		if err := vm.Execute(instructions); err != nil {
-			fmt.Printf("Error: %v\n", err)
+			fmt.Printf("Execution error: %v\n", err)
 		}
 	}
+}
+
+func printHelp() {
+	fmt.Println("Supported commands:")
+	fmt.Println("  SHOW DATABASES")
+	fmt.Println("  CREATE DATABASE <name>")
+	fmt.Println("  USE <database>")
+	fmt.Println("  CREATE TABLE <name> ( col type [primary key], ... )")
+	fmt.Println("  INSERT INTO <table> VALUES ( val1, val2, ... )")
+	fmt.Println("  SELECT * FROM <table> [ WHERE col = value ]")
+	fmt.Println("  SELECT * FROM t1 [ INNER|LEFT|RIGHT|FULL ] JOIN t2 ON col1 = col2 [ WHERE ... ]")
+	fmt.Println("  BEGIN; COMMIT; ROLLBACK")
+	fmt.Println("  exit")
+	fmt.Println("Note: UPDATE/DELETE/DROP are parsed but not executed yet.")
 }

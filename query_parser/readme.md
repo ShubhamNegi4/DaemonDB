@@ -36,4 +36,5 @@ ROLLBACK
 
 ### Notes
 - WHERE currently optimizes only on primary-key equality; other predicates fall back to scans.
-- UPDATE/DELETE are parsed but executor support is still pending.
+- UPDATE/DELETE/DROP are parsed but executor/codegen support is still pending.
+- Parser and code generator return errors (no panics); see `cmd/PARSER_PANIC_TRIGGERS.md` for correct syntax.
