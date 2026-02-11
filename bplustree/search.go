@@ -9,6 +9,7 @@ func (t *BPlusTree) Search(key []byte) ([]byte, error) {
 	if leaf == nil {
 		return []byte(nil), nil
 	}
+	defer t.cache.Unpin(leaf.id)
 	//linear search
 	// for i := 0; i < len(leaf.key); i++ {
 	// 	if t.cmp(leaf.key[i], key) == 0 {

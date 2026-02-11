@@ -19,8 +19,10 @@ func (t *BPlusTree) SplitInternal(node *Node) {
 	// update parent pointers for children moved to right
 	for _, cid := range right.children {
 		if c, _ := t.cache.Get(cid); c != nil {
+			_ = t.cache.Pin(c.id)
 			c.parent = right.id
 			t.cache.MarkDirty(c.id)
+			_ = t.cache.Unpin(c.id)
 		}
 	}
 

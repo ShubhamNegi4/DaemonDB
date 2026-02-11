@@ -102,8 +102,6 @@ for iter.Valid() {
 - ✅ Iterator for SeekGE/Next range scans
 - ✅ Thread-safe with RW locks
 
-**Known debt:** Some tree paths access `cache.pages[id]` directly instead of `Get/Put/MarkDirty`, which bypasses LRU + disk loads; see `bplustree/README.md` for the recommended refactor.
-
 **File Structure:**
 - `struct.go`: Node and tree data structures
 - `new_bplus_tree.go`: Constructs tree, loads persisted root
@@ -480,7 +478,6 @@ cd bplustree && go run bplus.go
 ## Future Work
 
 - [ ] Executor support for UPDATE/DELETE
-- [ ] Fix direct cache access paths in B+ tree to use BufferPool API
 - [ ] Secondary indexes and non-PK predicates
 - [ ] Garbage collection / compaction for tombstoned rows
 - [ ] Background checkpointing of WAL segments

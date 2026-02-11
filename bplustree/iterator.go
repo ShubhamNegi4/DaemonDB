@@ -9,6 +9,7 @@ type Iterator struct {
 }
 
 // SeekGE positions the iterator at the first key >= target.
+// The iterator holds a pinned leaf; call Close() when done to release it.
 func (t *BPlusTree) SeekGE(target []byte) *Iterator {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -23,14 +24,17 @@ func (t *BPlusTree) SeekGE(target []byte) *Iterator {
 	if i >= len(leaf.key) {
 		// move to next leaf if present
 		if leaf.next == 0 {
+			_ = t.cache.Unpin(leaf.id)
 			it.valid = false
 			return it
 		}
 		next, _ := t.cache.Get(leaf.next)
+		_ = t.cache.Unpin(leaf.id)
 		if next == nil || len(next.key) == 0 {
 			it.valid = false
 			return it
 		}
+		_ = t.cache.Pin(next.id)
 		it.leaf = next
 		it.index = 0
 		it.valid = true
@@ -53,18 +57,31 @@ func (it *Iterator) Next() bool {
 	}
 	// move to next leaf
 	nextId := it.leaf.next
+	_ = it.tree.cache.Unpin(it.leaf.id)
 	if nextId == 0 {
+		it.leaf = nil
 		it.valid = false
 		return false
 	}
 	next, _ := it.tree.cache.Get(nextId)
 	if next == nil || len(next.key) == 0 {
+		it.leaf = nil
 		it.valid = false
 		return false
 	}
+	_ = it.tree.cache.Pin(next.id)
 	it.leaf = next
 	it.index = 0
 	return true
+}
+
+// Close releases the pinned leaf. Call when done with the iterator.
+func (it *Iterator) Close() {
+	if it.leaf != nil {
+		_ = it.tree.cache.Unpin(it.leaf.id)
+		it.leaf = nil
+	}
+	it.valid = false
 }
 
 // Key returns the current key.

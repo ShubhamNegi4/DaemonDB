@@ -7,6 +7,8 @@ func (t *BPlusTree) insertIntoParent(parentId int64, leftId int64, sepKey []byte
 	if parent == nil {
 		return
 	}
+	_ = t.cache.Pin(parent.id)
+	defer t.cache.Unpin(parent.id)
 
 	// find index of leftId in parent's children
 	idx := 0
@@ -30,8 +32,10 @@ func (t *BPlusTree) insertIntoParent(parentId int64, leftId int64, sepKey []byte
 
 	// set right child's parent
 	if rc, _ := t.cache.Get(rightId); rc != nil {
+		_ = t.cache.Pin(rc.id)
 		rc.parent = parent.id
 		t.cache.MarkDirty(rc.id)
+		_ = t.cache.Unpin(rc.id)
 	}
 
 	// if overflow, split internal and propagate

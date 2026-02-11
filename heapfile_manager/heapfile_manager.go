@@ -2,6 +2,7 @@ package heapfile
 
 import (
 	"fmt"
+	"os"
 )
 
 // NewHeapFileManager creates a new heap file manager
@@ -94,4 +95,23 @@ func (hfm *HeapFileManager) DeleteRow(ptr *RowPointer) error {
 	}
 
 	return heapFile.deleteRow(ptr)
+}
+
+// CloseAndRemoveFile closes the heap file and removes it from the manager.
+// If the file exists on disk, it is deleted. Used by DROP TABLE replay.
+func (hfm *HeapFileManager) CloseAndRemoveFile(fileID uint32) error {
+	hfm.mu.Lock()
+	defer hfm.mu.Unlock()
+
+	heapFile, exists := hfm.files[fileID]
+	if !exists {
+		return nil
+	}
+	path := heapFile.filePath
+	if err := heapFile.pager.Close(); err != nil {
+		return err
+	}
+	delete(hfm.files, fileID)
+	_ = os.Remove(path)
+	return nil
 }

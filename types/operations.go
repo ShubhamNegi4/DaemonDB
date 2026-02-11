@@ -18,6 +18,9 @@ const (
 	OpTxnBegin  OperationType = 5
 	OpTxnCommit OperationType = 6
 	OpTxnAbort  OperationType = 7
+
+	// DDL (for WAL replay; VM will log these when DROP is implemented)
+	OpDrop OperationType = 8
 )
 
 type Operation struct {

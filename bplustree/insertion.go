@@ -37,6 +37,7 @@ func (t *BPlusTree) Insertion(key []byte, value []byte) {
 		_ = t.cache.Flush()
 		return
 	}
+	defer t.cache.Unpin(leaf.id)
 
 	i := binarySearchInsert(leaf.key, key, t.cmp)
 

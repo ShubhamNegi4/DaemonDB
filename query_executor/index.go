@@ -93,6 +93,18 @@ func (vm *VM) closeOpenIndexes() {
 	}
 }
 
+// closeIndexForTable closes and removes the B+ tree index for one table (e.g. for DROP TABLE replay).
+func (vm *VM) closeIndexForTable(tableName string) {
+	vm.indexCacheMu.Lock()
+	defer vm.indexCacheMu.Unlock()
+
+	btree, ok := vm.tableIndexCache[tableName]
+	if ok && btree != nil {
+		_ = btree.Close()
+	}
+	delete(vm.tableIndexCache, tableName)
+}
+
 // CloseIndexCache is the public name for closing all open indexes (e.g. from main on shutdown).
 func (vm *VM) CloseIndexCache() {
 	vm.closeOpenIndexes()

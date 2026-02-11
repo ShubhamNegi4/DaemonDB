@@ -13,6 +13,12 @@ func (t *BPlusTree) Delete(key []byte) {
 
 func (t *BPlusTree) deleteRecursive(nodeId int64, key []byte) bool {
 	node, _ := t.cache.Get(nodeId)
+	if node == nil {
+		return false
+	}
+	_ = t.cache.Pin(node.id)
+	defer t.cache.Unpin(node.id)
+
 	if node.nodeType == NodeLeaf {
 		idx := -1
 		for i := 0; i < len(node.key); i++ {
@@ -39,14 +45,33 @@ func (t *BPlusTree) deleteRecursive(nodeId int64, key []byte) bool {
 		return false
 	}
 	child, _ := t.cache.Get(node.children[i])
+	if child == nil {
+		return false
+	}
+	_ = t.cache.Pin(child.id)
 	var left *Node
 	var right *Node
 	if i > 0 {
 		left, _ = t.cache.Get(node.children[i-1])
+		if left != nil {
+			_ = t.cache.Pin(left.id)
+		}
 	}
 	if i < len(node.children)-1 {
 		right, _ = t.cache.Get(node.children[i+1])
+		if right != nil {
+			_ = t.cache.Pin(right.id)
+		}
 	}
+	defer func() {
+		_ = t.cache.Unpin(child.id)
+		if left != nil {
+			_ = t.cache.Unpin(left.id)
+		}
+		if right != nil {
+			_ = t.cache.Unpin(right.id)
+		}
+	}()
 	// Try borrow from left sibling
 	if left != nil && len(left.key) > (MaxKeys+1)/2 {
 		// move one key from left to child
@@ -114,8 +139,10 @@ func (t *BPlusTree) deleteRecursive(nodeId int64, key []byte) bool {
 			// update parent pointer for moved children
 			for _, cid := range child.children {
 				if c, _ := t.cache.Get(cid); c != nil {
+					_ = t.cache.Pin(c.id)
 					c.parent = left.id
 					t.cache.MarkDirty(c.id)
+					_ = t.cache.Unpin(c.id)
 				}
 			}
 		}
@@ -132,8 +159,10 @@ func (t *BPlusTree) deleteRecursive(nodeId int64, key []byte) bool {
 			child.children = append(child.children, right.children...)
 			for _, cid := range right.children {
 				if c, _ := t.cache.Get(cid); c != nil {
+					_ = t.cache.Pin(c.id)
 					c.parent = child.id
 					t.cache.MarkDirty(c.id)
+					_ = t.cache.Unpin(c.id)
 				}
 			}
 		}
@@ -146,8 +175,10 @@ func (t *BPlusTree) deleteRecursive(nodeId int64, key []byte) bool {
 		// collapse root
 		t.root = node.children[0]
 		if r, _ := t.cache.Get(t.root); r != nil {
+			_ = t.cache.Pin(r.id)
 			r.parent = 0
 			t.cache.MarkDirty(r.id)
+			_ = t.cache.Unpin(r.id)
 		}
 		t.saveRoot()
 	}
