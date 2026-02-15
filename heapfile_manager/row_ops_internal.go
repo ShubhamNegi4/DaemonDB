@@ -4,10 +4,11 @@ import (
 	"fmt"
 )
 
+// this file contains internal functions, they do ont contain locks.
+// but it is to be ensured that the external functions for each should contain locks to avoid cirtical section
+
 // insertRow inserts a row into the heap file and returns a RowPointer.
-func (hf *HeapFile) insertRow(rowData []byte) (*RowPointer, error) {
-	hf.mu.Lock()
-	defer hf.mu.Unlock()
+func (hf *HeapFile) insertRow(rowData []byte, opLSN uint64) (*RowPointer, error) {
 
 	rowLen := uint16(len(rowData))
 	maxRowSize := uint16(PageSize - PageHeaderSize - SlotSize)
@@ -31,7 +32,7 @@ func (hf *HeapFile) insertRow(rowData []byte) (*RowPointer, error) {
 	availableSpace := calculateFreeSpace(header)
 
 	if availableSpace < requiredSpace {
-		return hf.insertRow(rowData)
+		return hf.insertRow(rowData, opLSN)
 	}
 
 	rowOffset := header.FreePtr
@@ -49,6 +50,8 @@ func (hf *HeapFile) insertRow(rowData []byte) (*RowPointer, error) {
 		header.IsPageFull = 1
 	}
 
+	header.LastAppliedLSN = opLSN
+
 	writePageHeader(page, header)
 
 	if err := hf.writePage(pageNum, page); err != nil {
@@ -62,10 +65,7 @@ func (hf *HeapFile) insertRow(rowData []byte) (*RowPointer, error) {
 	}, nil
 }
 
-// GetRow retrieves a row from the heap file using a RowPointer.
-func (hf *HeapFile) GetRow(ptr *RowPointer) ([]byte, error) {
-	hf.mu.RLock()
-	defer hf.mu.RUnlock()
+func (hf *HeapFile) getRow(ptr *RowPointer) ([]byte, error) {
 
 	page, err := hf.readPage(ptr.PageNumber)
 	if err != nil {
@@ -90,15 +90,13 @@ func (hf *HeapFile) GetRow(ptr *RowPointer) ([]byte, error) {
 
 // GetAllRowPointers returns all valid row pointers in the heap file (full table scan).
 func (hf *HeapFile) GetAllRowPointers() []*RowPointer {
-	hf.mu.RLock()
-	defer hf.mu.RUnlock()
 
 	var result []*RowPointer
 
 	totalPages := hf.pager.TotalPages()
 
 	for pageID := int64(0); pageID < totalPages; pageID++ {
-		pageData, err := hf.pager.ReadPage(pageID)
+		pageData, err := hf.pager.readPage(pageID)
 		if err != nil {
 			continue
 		}
@@ -124,9 +122,7 @@ func (hf *HeapFile) GetAllRowPointers() []*RowPointer {
 }
 
 // deleteRow tombstones a row by zeroing its slot (Offset=0, Length=0).
-func (hf *HeapFile) deleteRow(ptr *RowPointer) error {
-	hf.mu.Lock()
-	defer hf.mu.Unlock()
+func (hf *HeapFile) deleteRow(ptr *RowPointer, opLSN uint64) error {
 
 	page, err := hf.readPage(ptr.PageNumber)
 	if err != nil {
@@ -159,6 +155,8 @@ func (hf *HeapFile) deleteRow(ptr *RowPointer) error {
 	}
 	header.IsPageFull = 0
 	header.NumRowsFree = calculateFreeSpace(header)
+
+	header.LastAppliedLSN = opLSN
 	writePageHeader(page, header)
 
 	if err := hf.writePage(ptr.PageNumber, page); err != nil {
@@ -166,4 +164,95 @@ func (hf *HeapFile) deleteRow(ptr *RowPointer) error {
 	}
 
 	return nil
+}
+
+func (hf *HeapFile) updateRow(ptr *RowPointer, newRowData []byte, opLSN uint64) error {
+
+	page, err := hf.readPage(ptr.PageNumber)
+
+	if err != nil {
+		return fmt.Errorf("failed to read page %d: %w", ptr.PageNumber, err)
+	}
+
+	header := readPageHeader(page)
+	if header == nil {
+		return fmt.Errorf("failed to read page header for page %d", ptr.PageNumber)
+	}
+	if ptr.SlotIndex >= header.SlotCount {
+		return fmt.Errorf("invalid slot index %d (slotCount=%d)", ptr.SlotIndex, header.SlotCount)
+	}
+
+	slot := readSlot(page, ptr.SlotIndex)
+	if slot == nil {
+		return fmt.Errorf("invalid slot at index %d", ptr.SlotIndex)
+	}
+
+	if slot.Offset == 0 || slot.Length == 0 {
+		return fmt.Errorf("slot %d is not occupied, nothing to update", ptr.SlotIndex)
+	}
+
+	newRowLen := uint16(len(newRowData))
+
+	if newRowLen > slot.Length {
+		// If new data is larger, we need to delete and re-insert
+
+		// Delete the old row
+		if err := hf.deleteRow(ptr, opLSN); err != nil {
+			return fmt.Errorf("failed to delete old row for update: %w", err)
+		}
+
+		// Insert the new row (this may return a different RowPointer)
+		newRP, err := hf.insertRow(newRowData, opLSN)
+		if err != nil {
+			return fmt.Errorf("failed to insert updated row: %w", err)
+		}
+
+		// Update the original row pointer to point to new location
+		*ptr = *newRP
+		return nil
+	}
+
+	// New data fits in existing slot (in-place update)
+	// Copy new data to the slot's offset
+	copy(page[slot.Offset:slot.Offset+newRowLen], newRowData)
+
+	// Update slot length if it changed
+	if newRowLen != slot.Length {
+		slot.Length = newRowLen
+		writeSlot(page, ptr.SlotIndex, slot)
+
+		header.NumRowsFree = calculateFreeSpace(header)
+	}
+
+	header.LastAppliedLSN = opLSN
+	writePageHeader(page, header)
+
+	// Write the updated page back to disk
+	if err := hf.writePage(ptr.PageNumber, page); err != nil {
+		return fmt.Errorf("failed to write page %d: %w", ptr.PageNumber, err)
+	}
+
+	return nil
+}
+
+// checkPageLSN checks if an operation has already been applied to a page
+func (hf *HeapFile) CheckPageLSN(pageNum uint32, opLSN uint64) (bool, error) {
+	totalPages := uint32(hf.pager.TotalPages())
+	if pageNum >= totalPages {
+		// Page doesn't exist = operation not applied yet
+		return false, nil
+	}
+
+	page, err := hf.readPage(pageNum)
+	if err != nil {
+		return false, err
+	}
+
+	header := readPageHeader(page)
+	if header == nil {
+		return false, fmt.Errorf("failed to read page header")
+	}
+
+	// If page LSN >= operation LSN, operation already applied
+	return header.LastAppliedLSN >= opLSN, nil
 }

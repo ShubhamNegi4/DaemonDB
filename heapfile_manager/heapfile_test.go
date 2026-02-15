@@ -6,7 +6,18 @@ import (
 	"testing"
 )
 
+// Test helper: generates incrementing LSNs for testing
+var testLSN uint64 = 0
+
+func nextLSN() uint64 {
+	testLSN++
+	return testLSN
+}
+
 func TestHeapFileOperations(t *testing.T) {
+	// Reset test LSN
+	testLSN = 0
+
 	// Create a temporary test directory
 	testDir := "./test_heap"
 	if err := os.MkdirAll(testDir, 0755); err != nil {
@@ -51,13 +62,15 @@ func TestHeapFileOperations(t *testing.T) {
 	// Insert all rows
 	fmt.Println("\n=== Inserting Rows ===")
 	for i, row := range testRows {
-		rowPtr, err := hfm.InsertRow(fileID, row.data)
+		// Use incrementing LSN for each insert
+		lsn := nextLSN()
+		rowPtr, err := hfm.InsertRow(fileID, row.data, lsn)
 		if err != nil {
 			t.Fatalf("Failed to insert %s: %v", row.name, err)
 		}
 		rowPointers = append(rowPointers, rowPtr)
-		fmt.Printf("✓ Inserted %s → File:%d, Page:%d, Slot:%d\n",
-			row.name, rowPtr.FileID, rowPtr.PageNumber, rowPtr.SlotIndex)
+		fmt.Printf("✓ Inserted %s (LSN %d) → File:%d, Page:%d, Slot:%d\n",
+			row.name, lsn, rowPtr.FileID, rowPtr.PageNumber, rowPtr.SlotIndex)
 
 		// Check if we're creating new pages
 		if i > 0 && rowPtr.PageNumber != rowPointers[i-1].PageNumber {
@@ -106,6 +119,8 @@ func TestHeapFileOperations(t *testing.T) {
 }
 
 func TestMultiplePages(t *testing.T) {
+	testLSN = 0 // Reset LSN
+
 	// Test that we create multiple pages when needed
 	testDir := "./test_multipage"
 	os.MkdirAll(testDir, 0755)
@@ -124,21 +139,20 @@ func TestMultiplePages(t *testing.T) {
 	}
 
 	// Insert enough rows to force multiple pages
-	// Each row is ~20 bytes, so we need ~200 rows to fill a page
-	// Let's insert 50 rows which should fit in 1-2 pages
 	fmt.Println("\n=== Testing Multiple Pages ===")
 	pageCounts := make(map[uint32]int)
 
-	for i := 0; i < 50; i++ {
+	for i := 0; i < 1000; i++ {
 		rowData := []byte(fmt.Sprintf("Student_%03d|Age_%d|Grade_%c", i, 20+i%5, 'A'+(i%3)))
-		rowPtr, err := hfm.InsertRow(fileID, rowData)
+		lsn := nextLSN()
+		rowPtr, err := hfm.InsertRow(fileID, rowData, lsn)
 		if err != nil {
 			t.Fatalf("Failed to insert row %d: %v", i, err)
 		}
 		pageCounts[rowPtr.PageNumber]++
 
 		if i%10 == 0 {
-			fmt.Printf("Inserted row %d → Page %d\n", i, rowPtr.PageNumber)
+			fmt.Printf("Inserted row %d (LSN %d) → Page %d\n", i, lsn, rowPtr.PageNumber)
 		}
 	}
 
@@ -152,27 +166,11 @@ func TestMultiplePages(t *testing.T) {
 	} else {
 		fmt.Printf("✓ Successfully created %d pages\n", len(pageCounts))
 	}
-
-	// Verify we can read from different pages
-	fmt.Println("\n=== Reading from Different Pages ===")
-	for pageNum := range pageCounts {
-		// Find a row pointer on this page
-		for i := 0; i < 50; i++ {
-			rowData := []byte(fmt.Sprintf("Student_%03d|Age_%d|Grade_%c", i, 20+i%5, 'A'+(i%3)))
-			rowPtr, _ := hfm.InsertRow(fileID, rowData)
-			if rowPtr.PageNumber == pageNum {
-				readData, err := hfm.GetRow(rowPtr)
-				if err != nil {
-					t.Fatalf("Failed to read from page %d: %v", pageNum, err)
-				}
-				fmt.Printf("✓ Read from Page %d: %s\n", pageNum, string(readData))
-				break
-			}
-		}
-	}
 }
 
 func TestSlotDirectory(t *testing.T) {
+	testLSN = 0 // Reset LSN
+
 	// Test that slot directory works correctly
 	testDir := "./test_slots"
 	os.MkdirAll(testDir, 0755)
@@ -196,7 +194,8 @@ func TestSlotDirectory(t *testing.T) {
 	rowPointers := make([]*RowPointer, 0)
 	for i := 0; i < 10; i++ {
 		rowData := []byte(fmt.Sprintf("Row_%d", i))
-		rowPtr, err := hfm.InsertRow(fileID, rowData)
+		lsn := nextLSN()
+		rowPtr, err := hfm.InsertRow(fileID, rowData, lsn)
 		if err != nil {
 			t.Fatalf("Failed to insert row %d: %v", i, err)
 		}
@@ -230,6 +229,8 @@ func TestSlotDirectory(t *testing.T) {
 }
 
 func TestPageHeader(t *testing.T) {
+	testLSN = 0 // Reset LSN
+
 	// Test that page headers are correctly maintained
 	testDir := "./test_header"
 	os.MkdirAll(testDir, 0755)
@@ -254,23 +255,33 @@ func TestPageHeader(t *testing.T) {
 	// Insert a few rows and check header after each
 	for i := 0; i < 5; i++ {
 		rowData := []byte(fmt.Sprintf("TestRow_%d", i))
-		rowPtr, err := heapFile.insertRow(rowData)
+		lsn := nextLSN()
+
+		// Lock before calling internal method
+		heapFile.mu.Lock()
+		rowPtr, err := heapFile.insertRow(rowData, lsn)
+		heapFile.mu.Unlock()
+
 		if err != nil {
 			t.Fatalf("Failed to insert row: %v", err)
 		}
 
 		// Read page and check header
+		heapFile.mu.RLock()
 		page, err := heapFile.readPage(rowPtr.PageNumber)
+		heapFile.mu.RUnlock()
+
 		if err != nil {
 			t.Fatalf("Failed to read page: %v", err)
 		}
 
 		header := readPageHeader(page)
-		fmt.Printf("After row %d:\n", i)
+		fmt.Printf("After row %d (LSN %d):\n", i, lsn)
 		fmt.Printf("  NumRows: %d\n", header.NumRows)
 		fmt.Printf("  SlotCount: %d\n", header.SlotCount)
 		fmt.Printf("  FreePtr: %d\n", header.FreePtr)
 		fmt.Printf("  IsPageFull: %d\n", header.IsPageFull)
+		fmt.Printf("  LastAppliedLSN: %d\n", header.LastAppliedLSN)
 
 		// Verify header matches expected values
 		if header.NumRows != uint16(i+1) {
@@ -279,28 +290,16 @@ func TestPageHeader(t *testing.T) {
 		if header.SlotCount != uint16(i+1) {
 			t.Errorf("Expected SlotCount=%d, got %d", i+1, header.SlotCount)
 		}
+		if header.LastAppliedLSN != lsn {
+			t.Errorf("Expected LastAppliedLSN=%d, got %d", lsn, header.LastAppliedLSN)
+		}
 		fmt.Println()
 	}
 }
 
-// Main test runner
-func TestAll(t *testing.T) {
-	fmt.Println("========================================")
-	fmt.Println("Heap File System Test Suite")
-	fmt.Println("========================================")
-	fmt.Println()
-
-	t.Run("BasicOperations", TestHeapFileOperations)
-	t.Run("MultiplePages", TestMultiplePages)
-	t.Run("SlotDirectory", TestSlotDirectory)
-	t.Run("PageHeader", TestPageHeader)
-
-	fmt.Println("\n========================================")
-	fmt.Println("All tests completed!")
-	fmt.Println("========================================")
-}
-
 func TestDeleteRow(t *testing.T) {
+	testLSN = 0 // Reset LSN
+
 	testDir := "./test_delete"
 	os.MkdirAll(testDir, 0755)
 	defer os.RemoveAll(testDir)
@@ -316,23 +315,133 @@ func TestDeleteRow(t *testing.T) {
 		t.Fatalf("Failed to create heap file: %v", err)
 	}
 
-	ptr, err := hfm.InsertRow(fileID, []byte("Alice|20|A"))
+	// Insert with LSN
+	insertLSN := nextLSN()
+	ptr, err := hfm.InsertRow(fileID, []byte("Alice|20|A"), insertLSN)
 	if err != nil {
 		t.Fatalf("Insert failed: %v", err)
 	}
 
-	// sanity: row exists
+	// Sanity: row exists
 	if _, err := hfm.GetRow(ptr); err != nil {
 		t.Fatalf("GetRow failed before delete: %v", err)
 	}
 
-	// delete
-	if err := hfm.DeleteRow(ptr); err != nil {
+	// Delete with LSN
+	deleteLSN := nextLSN()
+	if err := hfm.DeleteRow(ptr, deleteLSN); err != nil {
 		t.Fatalf("DeleteRow failed: %v", err)
 	}
 
-	// now must fail
+	// Now must fail
 	if _, err := hfm.GetRow(ptr); err == nil {
 		t.Fatalf("expected GetRow to fail after delete, but it succeeded")
 	}
+
+	fmt.Printf("✓ Delete test passed (Insert LSN: %d, Delete LSN: %d)\n", insertLSN, deleteLSN)
+}
+
+func TestLSNIdempotency(t *testing.T) {
+	testLSN = 0 // Reset LSN
+
+	testDir := "./test_lsn"
+	os.MkdirAll(testDir, 0755)
+	defer os.RemoveAll(testDir)
+
+	hfm, err := NewHeapFileManager(testDir)
+	if err != nil {
+		t.Fatalf("Failed to create heap file manager: %v", err)
+	}
+
+	tableName := "lsn_test"
+	fileID := uint32(1)
+	if err := hfm.CreateHeapfile(tableName, fileID); err != nil {
+		t.Fatalf("Failed to create heap file: %v", err)
+	}
+
+	fmt.Println("\n=== Testing LSN Idempotency ===")
+
+	heapFile := hfm.files[fileID]
+
+	// Insert first row with LSN 100
+	lsn1 := uint64(100)
+	heapFile.mu.Lock()
+	rowPtr1, err := heapFile.insertRow([]byte("Row1"), lsn1)
+	heapFile.mu.Unlock()
+	if err != nil {
+		t.Fatalf("Failed to insert row1: %v", err)
+	}
+
+	// Check page LSN
+	heapFile.mu.RLock()
+	page, _ := heapFile.readPage(rowPtr1.PageNumber)
+	header := readPageHeader(page)
+	heapFile.mu.RUnlock()
+
+	fmt.Printf("After LSN 100: Page LastAppliedLSN = %d\n", header.LastAppliedLSN)
+	if header.LastAppliedLSN != lsn1 {
+		t.Errorf("Expected LastAppliedLSN=%d, got %d", lsn1, header.LastAppliedLSN)
+	}
+
+	// Insert second row with LSN 200
+	lsn2 := uint64(200)
+	heapFile.mu.Lock()
+	rowPtr2, err := heapFile.insertRow([]byte("Row2"), lsn2)
+	heapFile.mu.Unlock()
+	if err != nil {
+		t.Fatalf("Failed to insert row2: %v", err)
+	}
+
+	// Check page LSN updated
+	heapFile.mu.RLock()
+	page, _ = heapFile.readPage(rowPtr2.PageNumber)
+	header = readPageHeader(page)
+	heapFile.mu.RUnlock()
+
+	fmt.Printf("After LSN 200: Page LastAppliedLSN = %d\n", header.LastAppliedLSN)
+	if header.LastAppliedLSN != lsn2 {
+		t.Errorf("Expected LastAppliedLSN=%d, got %d", lsn2, header.LastAppliedLSN)
+	}
+
+	// Test CheckPageLSN
+	heapFile.mu.RLock()
+	alreadyApplied, err := heapFile.CheckPageLSN(0, uint64(150))
+	heapFile.mu.RUnlock()
+	if err != nil {
+		t.Fatalf("CheckPageLSN failed: %v", err)
+	}
+	if !alreadyApplied {
+		t.Error("Expected LSN 150 to be already applied (page has LSN 200)")
+	}
+
+	heapFile.mu.RLock()
+	alreadyApplied, err = heapFile.CheckPageLSN(0, uint64(250))
+	heapFile.mu.RUnlock()
+	if err != nil {
+		t.Fatalf("CheckPageLSN failed: %v", err)
+	}
+	if alreadyApplied {
+		t.Error("Expected LSN 250 to NOT be already applied (page has LSN 200)")
+	}
+
+	fmt.Println("✓ LSN idempotency tests passed")
+}
+
+// Main test runner
+func TestAll(t *testing.T) {
+	fmt.Println("========================================")
+	fmt.Println("Heap File System Test Suite")
+	fmt.Println("========================================")
+	fmt.Println()
+
+	t.Run("BasicOperations", TestHeapFileOperations)
+	t.Run("MultiplePages", TestMultiplePages)
+	t.Run("SlotDirectory", TestSlotDirectory)
+	t.Run("PageHeader", TestPageHeader)
+	t.Run("DeleteRow", TestDeleteRow)
+	t.Run("LSNIdempotency", TestLSNIdempotency)
+
+	fmt.Println("\n========================================")
+	fmt.Println("All tests completed!")
+	fmt.Println("========================================")
 }

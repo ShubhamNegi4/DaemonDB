@@ -14,13 +14,14 @@ const (
 
 // PageHeader is the header for a single 4KB page
 type PageHeader struct {
-	FileID      uint32 // fileID which heap file this page belongs to
-	PageNo      uint32 // current page number inside the heap file
-	FreePtr     uint16 // ptr to the next free location, where insertion can be done
-	NumRows     uint16 // number of rows/slots it can accomodate
-	NumRowsFree uint16 // free rows/slots inside the current page
-	IsPageFull  uint16 // is the page full
-	SlotCount   uint16 // number of slots in the slot directory
+	FileID         uint32 // fileID which heap file this page belongs to
+	PageNo         uint32 // current page number inside the heap file
+	FreePtr        uint16 // ptr to the next free location, where insertion can be done
+	NumRows        uint16 // number of rows/slots it can accomodate
+	NumRowsFree    uint16 // free rows/slots inside the current page
+	IsPageFull     uint16 // is the page full
+	SlotCount      uint16 // number of slots in the slot directory
+	LastAppliedLSN uint64 // Last LSN applied to this page in wal
 }
 
 // Slot represents an entry in the slot directory at the bottom of the page

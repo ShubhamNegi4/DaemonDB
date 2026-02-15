@@ -24,6 +24,11 @@ const (
 	OP_CREATE_TABLE
 	OP_INSERT
 	OP_SELECT
+	OP_UPDATE
+	OP_ADD
+	OP_SUB
+	OP_MUL
+	OP_DIV
 
 	//  TRANSACTIONS (NEW)
 	OP_TXN_BEGIN
@@ -45,6 +50,9 @@ type VM struct {
 
 	TxnManager *TxnManager
 	currentTxn *Transaction
+	autoTxn    bool
+
+	CheckpointManager *CheckpointManager
 
 	stack           [][]byte
 	currDb          string
@@ -54,7 +62,7 @@ type VM struct {
 
 	// Per-table B+ tree index cache (avoids reopening the same .idx file).
 	// Cleared and closed when switching DB or on VM shutdown.
-	indexCacheMu   sync.RWMutex
+	indexCacheMu    sync.RWMutex
 	tableIndexCache map[string]*bplus.BPlusTree
 }
 
@@ -67,4 +75,20 @@ type SelectPayload struct {
 	JoinType  string   `json:"join_type,omitempty"`
 	LeftCol   string   `json:"left_col,omitempty"`
 	RightCol  string   `json:"right_col,omitempty"`
+}
+
+type UpdatePayload struct {
+	Table     string                    `json:"table"`
+	SetExprs  map[string]ExpressionNode `json:"set_exprs"`
+	WhereExpr *ExpressionNode           `json:"where_expr,omitempty"`
+}
+
+// ExpressionNode represents an expression tree for evaluation
+type ExpressionNode struct {
+	Type    int             `json:"type"` // 0=LITERAL, 1=COLUMN, 2=BINARY, 3=COMPARISON
+	Literal interface{}     `json:"literal,omitempty"`
+	Column  string          `json:"column,omitempty"`
+	Op      string          `json:"op,omitempty"`
+	Left    *ExpressionNode `json:"left,omitempty"`
+	Right   *ExpressionNode `json:"right,omitempty"`
 }

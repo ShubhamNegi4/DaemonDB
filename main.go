@@ -22,6 +22,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer walManager.Close()
 
 	// Initialize B+ Tree with in-memory pager; table-specific on-disk indexes are opened per-table via GetOrCreateIndex
 	pager := bplus.NewInMemoryPager()
@@ -37,11 +38,6 @@ func main() {
 
 	vm := executor.NewVM(tree, heapFileManager, walManager)
 	defer vm.CloseIndexCache()
-
-	if err := vm.RecoverAndReplayFromWAL(); err != nil {
-		walManager.Close()
-		log.Fatal(err)
-	}
 
 	scanner := bufio.NewScanner(os.Stdin)
 	// REPL

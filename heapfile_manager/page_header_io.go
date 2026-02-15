@@ -13,18 +13,20 @@ func writePageHeader(page []byte, header *PageHeader) {
 	binary.LittleEndian.PutUint16(page[12:14], header.NumRowsFree)
 	binary.LittleEndian.PutUint16(page[14:16], header.IsPageFull)
 	binary.LittleEndian.PutUint16(page[16:18], header.SlotCount)
+	binary.LittleEndian.PutUint64(page[18:26], header.LastAppliedLSN)
 	// bytes 18-31 are reserved for future use
 }
 
 // readPageHeader deserializes the page header from the first 32 bytes of the page
 func readPageHeader(page []byte) *PageHeader {
 	return &PageHeader{
-		FileID:      binary.LittleEndian.Uint32(page[0:4]),
-		PageNo:      binary.LittleEndian.Uint32(page[4:8]),
-		FreePtr:     binary.LittleEndian.Uint16(page[8:10]),
-		NumRows:     binary.LittleEndian.Uint16(page[10:12]),
-		NumRowsFree: binary.LittleEndian.Uint16(page[12:14]),
-		IsPageFull:  binary.LittleEndian.Uint16(page[14:16]),
-		SlotCount:   binary.LittleEndian.Uint16(page[16:18]),
+		FileID:         binary.LittleEndian.Uint32(page[0:4]),
+		PageNo:         binary.LittleEndian.Uint32(page[4:8]),
+		FreePtr:        binary.LittleEndian.Uint16(page[8:10]),
+		NumRows:        binary.LittleEndian.Uint16(page[10:12]),
+		NumRowsFree:    binary.LittleEndian.Uint16(page[12:14]),
+		IsPageFull:     binary.LittleEndian.Uint16(page[14:16]),
+		SlotCount:      binary.LittleEndian.Uint16(page[16:18]),
+		LastAppliedLSN: binary.LittleEndian.Uint64(page[18:26]),
 	}
 }

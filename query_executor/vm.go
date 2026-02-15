@@ -18,16 +18,17 @@ import (
 
 func NewVM(tree *bplus.BPlusTree, heapFileManager *heapfile.HeapFileManager, walManager *wal_manager.WALManager) *VM {
 	return &VM{
-		tree:             tree,
-		WalManager:       walManager,
-		heapfileManager:  heapFileManager,
-		TxnManager:       NewTxnManager(),
-		stack:            make([][]byte, 0),
-		currDb:           "demoDB",
-		tableToFileId:    make(map[string]uint32),
-		heapFileCounter:  1,
-		tableSchemas:     make(map[string]types.TableSchema),
-		tableIndexCache:  make(map[string]*bplus.BPlusTree),
+		tree:              tree,
+		WalManager:        walManager,
+		heapfileManager:   heapFileManager,
+		TxnManager:        NewTxnManager(),
+		CheckpointManager: nil,
+		stack:             make([][]byte, 0),
+		currDb:            "demoDB",
+		tableToFileId:     make(map[string]uint32),
+		heapFileCounter:   1,
+		tableSchemas:      make(map[string]types.TableSchema),
+		tableIndexCache:   make(map[string]*bplus.BPlusTree),
 	}
 }
 
@@ -68,6 +69,9 @@ func (vm *VM) Execute(instructions []Instruction) error {
 
 		case OP_SELECT:
 			return vm.ExecuteSelect(instr.Value)
+
+		case OP_UPDATE:
+			return vm.ExecuteUpdate(instr.Value)
 
 		case OP_TXN_BEGIN:
 			vm.currentTxn = vm.TxnManager.Begin()
@@ -119,7 +123,7 @@ func (vm *VM) Execute(instructions []Instruction) error {
 			for i := len(vm.currentTxn.InsertedRows) - 1; i >= 0; i-- {
 				ins := vm.currentTxn.InsertedRows[i]
 				rp := ins.RowPtr
-				if err := vm.heapfileManager.DeleteRow(&rp); err != nil {
+				if err := vm.heapfileManager.DeleteRow(&rp, op.LSN); err != nil {
 					return fmt.Errorf("rollback heap delete failed (table=%s file=%d page=%d slot=%d): %w",
 						ins.Table, rp.FileID, rp.PageNumber, rp.SlotIndex, err)
 				}

@@ -45,7 +45,7 @@ func OpenWAL(directory string) (*WALManager, error) {
 		return nil, err
 	}
 
-	if wal.CurrSegment == nil {
+	if len(wal.Segments) == 0 {
 		if err := wal.createNewSegment(); err != nil {
 			return nil, err
 		}
@@ -111,9 +111,15 @@ func (w *WALManager) recoverWALEntries() error {
 	// Set current segment to the last one
 	lastSegmentID := segmentIDs[len(segmentIDs)-1]
 	w.CurrSegment = w.Segments[lastSegmentID]
-	w.CurrentLSN = maxLSN
 
-	fmt.Printf("Recovered Successful: %+v\n", w)
+	totalSize := uint64(0)
+	for _, segmentID := range segmentIDs {
+		stat, _ := os.Stat(w.Segments[segmentID].FilePath)
+		totalSize += uint64(stat.Size())
+	}
+	w.CurrentLSN = totalSize
+
+	fmt.Printf("Recovered Successful: %+v current lsn: %d\n", w, w.CurrentLSN)
 
 	return nil
 }
@@ -242,10 +248,10 @@ func (wm *WALManager) AppendOperation(op *types.Operation) (uint64, error) {
 	wm.mu.Lock()
 	defer wm.mu.Unlock()
 
-	data := op.Encode()
+	lsn := wm.CurrentLSN // operation's LSN is current LSN of wal file
+	op.LSN = lsn
 
-	wm.CurrentLSN++
-	lsn := wm.CurrentLSN
+	data := op.Encode()
 
 	record := &WALRecord{
 		LSN:  lsn,
@@ -263,10 +269,12 @@ func (wm *WALManager) AppendOperation(op *types.Operation) (uint64, error) {
 	}
 
 	// Append to current segment (atomic operation due to O_APPEND)
-	_, err := wm.CurrSegment.Append(encodedRecord)
+	n, err := wm.CurrSegment.Append(encodedRecord)
 	if err != nil {
 		return 0, err
 	}
+
+	wm.CurrentLSN += uint64(n)
 
 	return lsn, nil
 }

@@ -2,6 +2,7 @@ package executor
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 )
@@ -60,6 +61,8 @@ func (vm *VM) ExecuteUseDatabase(name string) error {
 	vm.currDb = name
 	vm.heapfileManager.UpdateBaseDir(tablesDir)
 
+	vm.CheckpointManager = NewCheckpointManager(dbDir)
+
 	if err := vm.LoadTableFileMapping(); err != nil {
 		return err
 	}
@@ -71,6 +74,10 @@ func (vm *VM) ExecuteUseDatabase(name string) error {
 		if _, err := vm.heapfileManager.LoadHeapFile(fileID, tableName); err != nil {
 			return fmt.Errorf("failed to load heapfile for %s: %w", tableName, err)
 		}
+	}
+
+	if err := vm.RecoverAndReplayFromWAL(); err != nil {
+		log.Fatal(err)
 	}
 
 	return nil
