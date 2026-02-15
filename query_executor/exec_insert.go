@@ -96,8 +96,12 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 		return err
 	}
 
+	// Auto Transaction
 	if vm.currentTxn == nil {
-		vm.currentTxn = vm.TxnManager.Begin()
+		err := vm.autoTransactionBegin()
+		if err != nil {
+			return fmt.Errorf("failed to auto-begin transaction: %w", err)
+		}
 	}
 
 	op := &types.Operation{
@@ -107,15 +111,18 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 		RowData: row,
 	}
 
-	_, err = vm.WalManager.AppendOperation(op)
+	lsn, err := vm.WalManager.AppendOperation(op)
 	if err != nil {
 		return fmt.Errorf("wal append failed: %w", err)
 	}
+
+	op.LSN = lsn
+
 	if err := vm.WalManager.Sync(); err != nil {
 		return fmt.Errorf("wal sync failed: %w", err)
 	}
 
-	rowPtr, err := vm.heapfileManager.InsertRow(fileID, row)
+	rowPtr, err := vm.heapfileManager.InsertRow(fileID, row, lsn)
 	if err != nil {
 		return fmt.Errorf("heap insert failed: %w", err)
 	}
@@ -127,25 +134,21 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 		return fmt.Errorf("failed to extract primary key: %w", err)
 	}
 
-	if vm.currentTxn != nil {
-		vm.currentTxn.InsertedRows = append(
-			vm.currentTxn.InsertedRows,
-			InsertedRow{
-				Table:      tableName,
-				RowPtr:     *rowPtr,
-				PrimaryKey: primaryKeyBytes,
-			},
-		)
+	if primaryKeyBytes != nil {
+		rowPtrBytes := vm.SerializeRowPointer(rowPtr)
+		btree, err := vm.GetOrCreateIndex(tableName)
+		if err != nil {
+			return fmt.Errorf("failed to get index: %w", err)
+		}
+		btree.Insertion(primaryKeyBytes, rowPtrBytes)
 	}
 
-	rowPtrBytes := vm.SerializeRowPointer(rowPtr)
-
-	btree, err := vm.GetOrCreateIndex(tableName)
-	if err != nil {
-		return fmt.Errorf("failed to get index: %w", err)
+	if vm.autoTxn {
+		err := vm.autoTransactionEnd()
+		if err != nil {
+			return fmt.Errorf("failed to auto-commit: %w", err)
+		}
 	}
-
-	btree.Insertion(primaryKeyBytes, rowPtrBytes)
 
 	return nil
 }

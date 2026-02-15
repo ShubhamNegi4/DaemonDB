@@ -6,9 +6,9 @@ import (
 
 // getSlotDirectoryOffset returns the offset where the slot directory starts
 // Slot directory grows backward from the end of the page
-func getSlotDirectoryOffset(header *PageHeader) uint16 {
-	return PageSize - (header.SlotCount * SlotSize)
-}
+// func getSlotDirectoryOffset(header *PageHeader) uint16 {
+// 	return PageSize - (header.SlotCount * SlotSize)
+// }
 
 // readSlot reads a slot entry from the slot directory
 // Slots are stored backward from the end: slot 0 is at PageSize-SlotSize, slot 1 at PageSize-2*SlotSize, etc.

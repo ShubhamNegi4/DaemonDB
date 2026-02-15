@@ -35,16 +35,3 @@ func (hfm *HeapFileManager) LoadHeapFile(fileID uint32, tableName string) (*Heap
 	hfm.files[fileID] = hf
 	return hf, nil
 }
-
-// InsertRow inserts a row into the specified heap file (delegates to HeapFile.insertRow).
-func (hfm *HeapFileManager) InsertRow(fileID uint32, rowData []byte) (*RowPointer, error) {
-	hfm.mu.RLock()
-	heapFile, exists := hfm.files[fileID]
-	hfm.mu.RUnlock()
-
-	if !exists {
-		return nil, fmt.Errorf("heap file %d not found", fileID)
-	}
-
-	return heapFile.insertRow(rowData)
-}

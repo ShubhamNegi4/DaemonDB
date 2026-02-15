@@ -42,19 +42,6 @@ func (hfm *HeapFileManager) CreateHeapfile(tableName string, fileID uint32) erro
 	return nil
 }
 
-// GetRow retrieves a row from the heap file using a RowPointer
-func (hfm *HeapFileManager) GetRow(ptr *RowPointer) ([]byte, error) {
-	hfm.mu.RLock()
-	heapFile, exists := hfm.files[ptr.FileID]
-	hfm.mu.RUnlock()
-
-	if !exists {
-		return nil, fmt.Errorf("heap file %d not found", ptr.FileID)
-	}
-
-	return heapFile.GetRow(ptr)
-}
-
 func (hfm *HeapFileManager) GetHeapFileByID(fileID uint32) (*HeapFile, error) {
 	hfm.mu.RLock()
 	hf, exists := hfm.files[fileID]
@@ -81,20 +68,6 @@ func (hfm *HeapFileManager) CloseAll() error {
 	}
 
 	return lastErr
-}
-
-// DeleteRow tombstones a row using its RowPointer.
-// After this, GetRow(ptr) should return "invalid slot".
-func (hfm *HeapFileManager) DeleteRow(ptr *RowPointer) error {
-	hfm.mu.RLock()
-	heapFile, exists := hfm.files[ptr.FileID]
-	hfm.mu.RUnlock()
-
-	if !exists {
-		return fmt.Errorf("heap file %d not found", ptr.FileID)
-	}
-
-	return heapFile.deleteRow(ptr)
 }
 
 // CloseAndRemoveFile closes the heap file and removes it from the manager.

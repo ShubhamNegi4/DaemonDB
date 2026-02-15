@@ -41,15 +41,15 @@ func NewHeapFilePager(heapPath string) (*HeapFilePager, error) {
 
 // readPage reads a 4KB page from disk at the given page number using the pager
 func (hf *HeapFile) readPage(pageNum uint32) ([]byte, error) {
-	return hf.pager.ReadPage(int64(pageNum))
+	return hf.pager.readPage(int64(pageNum))
 }
 
 // writePage writes a 4KB page to disk at the given page number using the pager
 func (hf *HeapFile) writePage(pageNum uint32, page []byte) error {
-	return hf.pager.WritePage(int64(pageNum), page)
+	return hf.pager.writePage(int64(pageNum), page)
 }
 
-func (p *HeapFilePager) ReadPage(pageID int64) ([]byte, error) {
+func (p *HeapFilePager) readPage(pageID int64) ([]byte, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -78,7 +78,7 @@ func (p *HeapFilePager) ReadPage(pageID int64) ([]byte, error) {
 }
 
 // WritePage writes a 4KB page to disk at the given page ID
-func (p *HeapFilePager) WritePage(pageID int64, data []byte) error {
+func (p *HeapFilePager) writePage(pageID int64, data []byte) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -123,7 +123,7 @@ func (hf *HeapFile) initializePage(pageNo uint32) error {
 	writePageHeader(page, &header)
 
 	// Write page to disk using pager
-	return hf.pager.WritePage(int64(pageNo), page)
+	return hf.pager.writePage(int64(pageNo), page)
 }
 
 // AllocatePage allocates a new page and returns its ID
