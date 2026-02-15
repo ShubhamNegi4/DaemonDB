@@ -30,7 +30,7 @@ func (p *Parser) parseInsert() (*InsertStmt, error) {
 	values := []string{}
 	for p.curToken.Kind != lex.CLOSEDROUNDED && p.curToken.Kind != lex.END {
 		switch p.curToken.Kind {
-		case lex.STRING, lex.INT:
+		case lex.VARCHAR, lex.INT:
 			values = append(values, p.curToken.Value)
 			p.nextToken()
 		case lex.COMMA:
@@ -157,7 +157,7 @@ func (p *Parser) parsePrimary() *ValueExpr {
 			Type:    EXPR_LITERAL,
 			Literal: val,
 		}
-	case lex.STRING:
+	case lex.VARCHAR:
 		p.nextToken()
 		return &ValueExpr{
 			Type:    EXPR_LITERAL,

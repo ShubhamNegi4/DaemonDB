@@ -2,44 +2,32 @@ package main
 
 import (
 	bplus "DaemonDB/bplustree"
-	heapfile "DaemonDB/heapfile_manager"
 	executor "DaemonDB/query_executor"
 	codegen "DaemonDB/query_parser/code-generator"
 	lex "DaemonDB/query_parser/lexer"
 	"DaemonDB/query_parser/parser"
-	"DaemonDB/wal_manager"
 	"bufio"
 	"bytes"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 )
 
 func main() {
 
-	walManager, err := wal_manager.OpenWAL("databases/demoDB/logs") // fixed for now, depends on database too
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer walManager.Close()
-
 	// Initialize B+ Tree with in-memory pager; table-specific on-disk indexes are opened per-table via GetOrCreateIndex
 	pager := bplus.NewInMemoryPager()
 	cache := bplus.NewBufferPool(10)
 	tree := bplus.NewBPlusTree(pager, cache, bytes.Compare)
 
-	// a must `USE DATABASE` command will initialize this
-	heapFileManager, err := heapfile.NewHeapFileManager("databases/demoDB")
-	if err != nil {
-		walManager.Close()
-		log.Fatal(err)
-	}
-
-	vm := executor.NewVM(tree, heapFileManager, walManager)
+	vm := executor.NewVM(tree, nil, nil)
 	defer vm.CloseIndexCache()
 
 	scanner := bufio.NewScanner(os.Stdin)
+
+	fmt.Println("Welcome to DaemonDB!")
+	fmt.Println("Please use 'USE <database>' or 'SHOW DATABASES' or 'CREATE DATABASE <database>' to begin.")
+	fmt.Println("Type 'help' for more commands.")
 	// REPL
 	for {
 		fmt.Print("daemon> ")

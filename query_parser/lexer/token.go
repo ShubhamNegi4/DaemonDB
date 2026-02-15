@@ -20,7 +20,7 @@ const (
 	MUL
 	DIV
 	INT
-	STRING
+	VARCHAR
 	COMMA
 	ASTERISK
 	EQUAL
@@ -96,8 +96,8 @@ func (tk TokenKind) String() string {
 		return "DIV"
 	case INT:
 		return "INT"
-	case STRING:
-		return "STRING"
+	case VARCHAR:
+		return "VARCHAR"
 	case COMMA:
 		return "COMMA"
 	case ASTERISK:

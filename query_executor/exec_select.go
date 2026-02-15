@@ -10,6 +10,11 @@ import (
 )
 
 func (vm *VM) ExecuteSelect(arg string) error {
+
+	if err := vm.RequireDatabase(); err != nil {
+		return fmt.Errorf("no database selected. Run: USE <dbname>")
+	}
+
 	var payload SelectPayload
 	if err := json.Unmarshal([]byte(arg), &payload); err != nil {
 		return fmt.Errorf("invalid select payload: %w", err)

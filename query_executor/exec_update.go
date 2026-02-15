@@ -11,7 +11,7 @@ import (
 
 // ExecuteUpdate handles UPDATE statements
 func (vm *VM) ExecuteUpdate(tableName string) error {
-	if vm.currDb == "" {
+	if err := vm.RequireDatabase(); err != nil {
 		return fmt.Errorf("no database selected. Run: USE <dbname>")
 	}
 

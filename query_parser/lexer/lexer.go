@@ -100,7 +100,7 @@ func (l *Lexer) NextToken() Token {
 		return tok
 	case '"':
 		str := l.readString()
-		tok := Token{Kind: STRING, Value: str}
+		tok := Token{Kind: VARCHAR, Value: str}
 		return tok
 	case '.':
 		tok := Token{Kind: DOT, Value: string(l.ch)}

@@ -10,7 +10,7 @@ import (
 )
 
 func (vm *VM) ExecuteInsert(tableName string) error {
-	if vm.currDb == "" {
+	if err := vm.RequireDatabase(); err != nil {
 		return fmt.Errorf("no database selected. Run: USE <dbname>")
 	}
 

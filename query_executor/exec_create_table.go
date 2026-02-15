@@ -10,7 +10,7 @@ import (
 )
 
 func (vm *VM) ExecuteCreateTable(tableName string) error {
-	if vm.currDb == "" {
+	if err := vm.RequireDatabase(); err != nil {
 		return fmt.Errorf("no database selected. Run: USE <dbname>")
 	}
 
@@ -36,9 +36,6 @@ func (vm *VM) ExecuteCreateTable(tableName string) error {
 		}
 		isPK := len(colItr) >= 3 && strings.EqualFold(colItr[2], "pk")
 		colType := strings.ToUpper(colItr[0])
-		if colType == "STRING" {
-			colType = "VARCHAR"
-		}
 		columnDefs = append(columnDefs, types.ColumnDef{
 			Name:         colItr[1],
 			Type:         colType,
