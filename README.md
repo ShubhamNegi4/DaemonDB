@@ -202,7 +202,11 @@ INSERT INTO students VALUES ("S002", "Bob", 21, "B")
 SELECT * FROM students
 SELECT name, grade FROM students
 
--- Data updates (parser accepts; executor not yet implemented)
+-- Data updates
+UPDATE students SET id=id+3 WHERE id=5 -- similary for -,*,/,<,>,<=,>=,!=
+UPDATE students SET id=5 -- changes all rows
+UPDATE students SET name="newName" WHERE name="currName"
+
 -- UPDATE students SET grade = "A+" WHERE id = "S001"
 
 -- Table Join

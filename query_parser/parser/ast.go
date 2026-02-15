@@ -63,9 +63,28 @@ type DropStmt struct {
 }
 
 // UPDATE statement
+type ExprType int
+
+const (
+	EXPR_LITERAL ExprType = iota
+	EXPR_COLUMN
+	EXPR_BINARY
+	EXPR_COMPARISON
+)
+
+type ValueExpr struct {
+	Type       ExprType
+	Literal    any
+	ColumnName string
+	Left       *ValueExpr
+	Right      *ValueExpr
+	Op         string // "+", "-", "*", "/"
+}
+
 type UpdateStmt struct {
-	Table       string
-	Assignments map[string]string
+	Table     string
+	SetExprs  map[string]*ValueExpr
+	WhereExpr *ValueExpr
 }
 
 // TRANSACTION statements

@@ -15,11 +15,20 @@ const (
 	SET
 	FROM
 	WHERE
+	PLUS
+	MINUS
+	MUL
+	DIV
 	INT
 	STRING
 	COMMA
 	ASTERISK
 	EQUAL
+	NOTEQUAL
+	LESSTHAN
+	GREATERTHAN
+	LESSTHANEQUAL
+	GREATERTHANEQUAL
 	OPENCURLY
 	CLOSECURLY
 	OPENROUNDED
@@ -45,6 +54,7 @@ const (
 	ON
 	DOT
 	NULL
+	ILLEGAL
 )
 
 type Token struct {
@@ -78,6 +88,12 @@ func (tk TokenKind) String() string {
 		return "FROM"
 	case WHERE:
 		return "WHERE"
+	case PLUS:
+		return "PLUS"
+	case MINUS:
+		return "MINUS"
+	case DIV:
+		return "DIV"
 	case INT:
 		return "INT"
 	case STRING:
@@ -86,6 +102,16 @@ func (tk TokenKind) String() string {
 		return "COMMA"
 	case ASTERISK:
 		return "ASTERISK"
+	case LESSTHAN:
+		return "LESSTHAN"
+	case GREATERTHAN:
+		return "GREATERTHAN"
+	case LESSTHANEQUAL:
+		return "LESSTHANEQUAL"
+	case GREATERTHANEQUAL:
+		return "GREATERTHANEQUAL"
+	case NOTEQUAL:
+		return "NOTEQUAL"
 	case EQUAL:
 		return "EQUAL"
 	case OPENCURLY:
@@ -126,6 +152,8 @@ func (tk TokenKind) String() string {
 		return "DOT"
 	case NULL:
 		return "NULL"
+	case ILLEGAL:
+		return "ILLEGAL"
 	default:
 		return "UNKNOWN"
 	}

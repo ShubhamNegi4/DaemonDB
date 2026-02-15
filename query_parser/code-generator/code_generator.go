@@ -135,6 +135,13 @@ func EmitBytecode(stmt parser.Statement) ([]executor.Instruction, error) {
 			Value: string(payloadJSON),
 		})
 
+	case *parser.UpdateStmt:
+		fmt.Println("UPDATE", s.Table)
+		updateInstructions, err := EmitUpdateBytecode(s)
+		if err != nil {
+			return nil, err
+		}
+		instructions = append(instructions, updateInstructions...)
 	default:
 		return nil, fmt.Errorf("unknown statement type (no bytecode emitted)")
 	}

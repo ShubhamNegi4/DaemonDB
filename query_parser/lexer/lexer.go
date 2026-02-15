@@ -26,6 +26,18 @@ func (l *Lexer) NextToken() Token {
 	l.skipWhiteSpaces()
 
 	switch l.ch {
+	case '+':
+		tok := Token{Kind: PLUS, Value: string(l.ch)}
+		l.readChar()
+		return tok
+	case '-':
+		tok := Token{Kind: MINUS, Value: string(l.ch)}
+		l.readChar()
+		return tok
+	case '/':
+		tok := Token{Kind: DIV, Value: string(l.ch)}
+		l.readChar()
+		return tok
 	case ',':
 		tok := Token{Kind: COMMA, Value: string(l.ch)}
 		l.readChar()
@@ -35,9 +47,41 @@ func (l *Lexer) NextToken() Token {
 		l.readChar()
 		return tok
 	case '=':
-		tok := Token{Kind: EQUAL, Value: string(l.ch)}
+		tok := Token{Kind: EQUAL, Value: "="}
 		l.readChar()
 		return tok
+
+	case '!':
+		if l.peekChar() == '=' {
+			l.readChar()
+			l.readChar()
+			return Token{Kind: NOTEQUAL, Value: "!="}
+		}
+		return Token{Kind: ILLEGAL}
+
+	case '<':
+		if l.peekChar() == '=' {
+			l.readChar()
+			l.readChar()
+			return Token{Kind: LESSTHANEQUAL, Value: "<="}
+		}
+		if l.peekChar() == '>' { // SQL standard not equal
+			l.readChar()
+			l.readChar()
+			return Token{Kind: NOTEQUAL, Value: "<>"}
+		}
+		l.readChar()
+		return Token{Kind: LESSTHAN, Value: "<"}
+
+	case '>':
+		if l.peekChar() == '=' {
+			l.readChar()
+			l.readChar()
+			return Token{Kind: GREATERTHANEQUAL, Value: ">="}
+		}
+		l.readChar()
+		return Token{Kind: GREATERTHAN, Value: ">"}
+
 	case '{':
 		tok := Token{Kind: OPENCURLY, Value: string(l.ch)}
 		l.readChar()
@@ -75,6 +119,13 @@ func (l *Lexer) NextToken() Token {
 			return Token{Kind: INVALID, Value: string(l.ch)}
 		}
 	}
+}
+
+func (l *Lexer) peekChar() byte {
+	if l.readPos >= len(l.input) {
+		return 0
+	}
+	return l.input[l.readPos]
 }
 
 func (l *Lexer) readChar() {
@@ -146,6 +197,12 @@ func KeyIdentKind(str string) TokenKind {
 		return SET
 	case "FROM":
 		return FROM
+	case "PLUS":
+		return PLUS
+	case "MINUS":
+		return MINUS
+	case "DIV":
+		return DIV
 	case "WHERE":
 		return WHERE
 	case "TABLE":
