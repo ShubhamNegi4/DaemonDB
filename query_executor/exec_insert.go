@@ -1,102 +1,39 @@
 package executor
 
 import (
-	"DaemonDB/types"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 )
 
+/*
+This file contains command related to inserting value into the table,
+the vm function does the pre processing like getting schema from catalog manager and validation over number of columns passed in the query
+vm also calls auto transaction handlers for the insert operation
+*/
+
 func (vm *VM) ExecuteInsert(tableName string) error {
-	if err := vm.RequireDatabase(); err != nil {
+	if err := vm.storageEngine.RequireDatabase(); err != nil {
 		return fmt.Errorf("no database selected. Run: USE <dbname>")
 	}
 
-	schemaPath := filepath.Join(DB_ROOT, vm.currDb, "tables", tableName+"_schema.json")
-	data, err := os.ReadFile(schemaPath)
+	schema, err := vm.storageEngine.CatalogManager.GetTableSchema(tableName)
+
+	fmt.Print("schema: %+w", schema)
 	if err != nil {
-		return fmt.Errorf("table not found %s: %w", tableName, err)
-	}
-
-	var schema types.TableSchema
-	if err := json.Unmarshal(data, &schema); err != nil {
-		return fmt.Errorf("invalid schema: %w", err)
-	}
-
-	fileID, ok := vm.tableToFileId[tableName]
-	if !ok {
-		return fmt.Errorf("heap file not found for table '%s'", tableName)
-	}
-
-	columnNames := []types.ColumnDef{}
-	if len(columnNames) == 0 {
-		for _, col := range schema.Columns {
-			columnNames = append(columnNames, types.ColumnDef{Name: col.Name, Type: col.Type, IsPrimaryKey: col.IsPrimaryKey})
-		}
+		return fmt.Errorf("table '%s' not found: %w", tableName, err)
 	}
 
 	if len(vm.stack) < len(schema.Columns) {
-		return fmt.Errorf("table schema doesnt match the given query")
+		return fmt.Errorf("stack underflow: need %d values, have %d",
+			len(schema.Columns), len(vm.stack))
 	}
 
 	values := make([]any, len(schema.Columns))
 	for i := len(schema.Columns) - 1; i >= 0; i-- {
-		if len(vm.stack) == 0 {
-			return fmt.Errorf("stack underflow at column %d", i)
-		}
-		v := vm.stack[len(vm.stack)-1]
+		values[i] = vm.stack[len(vm.stack)-1]
 		vm.stack = vm.stack[:len(vm.stack)-1]
-		values[i] = v
 	}
 
-	if len(columnNames) != len(values) {
-		return fmt.Errorf("column count (%d) doesn't match value count (%d)",
-			len(columnNames), len(values))
-	}
-
-	for _, fk := range schema.ForeignKeys {
-		fkColIdx := -1
-		var fkCol types.ColumnDef
-
-		for i, c := range schema.Columns {
-			if strings.EqualFold(c.Name, fk.Column) {
-				fkColIdx = i
-				fkCol = c
-				break
-			}
-		}
-
-		if fkColIdx == -1 {
-			return fmt.Errorf("foreign key column %s not found", fk.Column)
-		}
-
-		fkValueBytes, err := ValueToBytes(values[fkColIdx], fkCol.Type)
-		if err != nil {
-			return fmt.Errorf("foreign key value error: %w", err)
-		}
-
-		refIndex, err := vm.GetOrCreateIndex(fk.RefTable)
-		if err != nil {
-			return fmt.Errorf("referenced table %s not found", fk.RefTable)
-		}
-
-		refRowPtr, err := refIndex.Search(fkValueBytes)
-		if err != nil || refRowPtr == nil {
-			return fmt.Errorf(
-				"foreign key constraint failed: %s.%s → %s.%s",
-				tableName, fk.Column, fk.RefTable, fk.RefColumn,
-			)
-		}
-	}
-
-	row, err := vm.SerializeRow(columnNames, values)
-	if err != nil {
-		return err
-	}
-
-	// Auto Transaction
+	// Auto Transaction Begin
 	if vm.currentTxn == nil {
 		err := vm.autoTransactionBegin()
 		if err != nil {
@@ -104,48 +41,18 @@ func (vm *VM) ExecuteInsert(tableName string) error {
 		}
 	}
 
-	op := &types.Operation{
-		Type:    types.OpInsert,
-		TxnID:   vm.currentTxn.ID,
-		Table:   tableName,
-		RowData: row,
-	}
+	err = vm.storageEngine.InsertRow(vm.currentTxn, tableName, values)
 
-	lsn, err := vm.WalManager.AppendOperation(op)
 	if err != nil {
-		return fmt.Errorf("wal append failed: %w", err)
-	}
-
-	op.LSN = lsn
-
-	if err := vm.WalManager.Sync(); err != nil {
-		return fmt.Errorf("wal sync failed: %w", err)
-	}
-
-	rowPtr, err := vm.heapfileManager.InsertRow(fileID, row, lsn)
-	if err != nil {
-		return fmt.Errorf("heap insert failed: %w", err)
-	}
-
-	op.RowPtr = rowPtr
-
-	primaryKeyBytes, _, err := vm.ExtractPrimaryKey(schema, values, rowPtr)
-	if err != nil {
-		return fmt.Errorf("failed to extract primary key: %w", err)
-	}
-
-	if primaryKeyBytes != nil {
-		rowPtrBytes := vm.SerializeRowPointer(rowPtr)
-		btree, err := vm.GetOrCreateIndex(tableName)
-		if err != nil {
-			return fmt.Errorf("failed to get index: %w", err)
+		// Statement failed — if we auto-began, we must abort
+		if vm.autoTxn {
+			_ = vm.autoTransactionAbort()
 		}
-		btree.Insertion(primaryKeyBytes, rowPtrBytes)
+		return fmt.Errorf("failed to insert row: %w", err)
 	}
 
 	if vm.autoTxn {
-		err := vm.autoTransactionEnd()
-		if err != nil {
+		if err := vm.autoTransactionCommit(); err != nil {
 			return fmt.Errorf("failed to auto-commit: %w", err)
 		}
 	}

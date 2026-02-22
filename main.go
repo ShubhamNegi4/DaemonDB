@@ -1,27 +1,44 @@
 package main
 
 import (
-	bplus "DaemonDB/bplustree"
 	executor "DaemonDB/query_executor"
 	codegen "DaemonDB/query_parser/code-generator"
 	lex "DaemonDB/query_parser/lexer"
 	"DaemonDB/query_parser/parser"
+	storageengine "DaemonDB/storage_engine"
 	"bufio"
-	"bytes"
 	"fmt"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 )
 
 func main() {
 
-	// Initialize B+ Tree with in-memory pager; table-specific on-disk indexes are opened per-table via GetOrCreateIndex
-	pager := bplus.NewInMemoryPager()
-	cache := bplus.NewBufferPool(10)
-	tree := bplus.NewBPlusTree(pager, cache, bytes.Compare)
+	const DB_ROOT = "./database"
 
-	vm := executor.NewVM(tree, nil, nil)
-	defer vm.CloseIndexCache()
+	engine, err := storageengine.NewStorageEngine(DB_ROOT)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to initialize storage engine: %v\n", err)
+		os.Exit(1)
+	}
+
+	vm := executor.NewVM(engine)
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		fmt.Println("\nShutting down...")
+		if engine.BufferPool != nil {
+			engine.BufferPool.FlushAllPages()
+		}
+		if engine.DiskManager != nil {
+			engine.DiskManager.CloseAll()
+		}
+		os.Exit(0)
+	}()
 
 	scanner := bufio.NewScanner(os.Stdin)
 

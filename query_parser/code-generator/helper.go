@@ -3,6 +3,7 @@ package codegen
 import (
 	executor "DaemonDB/query_executor"
 	"DaemonDB/query_parser/parser"
+	"DaemonDB/types"
 	"encoding/json"
 	"fmt"
 )
@@ -12,9 +13,9 @@ import (
 func EmitUpdateBytecode(stmt *parser.UpdateStmt) ([]executor.Instruction, error) {
 	instructions := []executor.Instruction{}
 
-	payload := executor.UpdatePayload{
+	payload := types.UpdatePayload{
 		Table:     stmt.Table,
-		SetExprs:  make(map[string]executor.ExpressionNode),
+		SetExprs:  make(map[string]types.ExpressionNode),
 		WhereExpr: nil,
 	}
 
@@ -46,8 +47,8 @@ func EmitUpdateBytecode(stmt *parser.UpdateStmt) ([]executor.Instruction, error)
 }
 
 // convertExprToNode converts parser.ValueExpr to executor.ExpressionNode
-func convertExprToNode(expr *parser.ValueExpr) executor.ExpressionNode {
-	node := executor.ExpressionNode{
+func convertExprToNode(expr *parser.ValueExpr) types.ExpressionNode {
+	node := types.ExpressionNode{
 		Type:    int(expr.Type),
 		Literal: expr.Literal,
 		Column:  expr.ColumnName,

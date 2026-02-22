@@ -1,14 +1,9 @@
 package executor
 
 import (
-	bplus "DaemonDB/bplustree"
-	heapfile "DaemonDB/heapfile_manager"
-	"DaemonDB/types"
-	"DaemonDB/wal_manager"
-	"sync"
+	storageengine "DaemonDB/storage_engine"
+	txn "DaemonDB/storage_engine/transaction_manager"
 )
-
-const DB_ROOT = "./databases" // all databases stored here
 
 type OpCode byte
 
@@ -44,51 +39,10 @@ type Instruction struct {
 }
 
 type VM struct {
-	tree            *bplus.BPlusTree
-	WalManager      *wal_manager.WALManager
-	heapfileManager *heapfile.HeapFileManager
+	storageEngine *storageengine.StorageEngine
 
-	TxnManager *TxnManager
-	currentTxn *Transaction
+	currentTxn *txn.Transaction
 	autoTxn    bool
 
-	CheckpointManager *CheckpointManager
-
-	stack           [][]byte
-	currDb          string
-	tableToFileId   map[string]uint32 // table name to heap file id
-	heapFileCounter uint32
-	tableSchemas    map[string]types.TableSchema
-
-	// Per-table B+ tree index cache (avoids reopening the same .idx file).
-	// Cleared and closed when switching DB or on VM shutdown.
-	indexCacheMu    sync.RWMutex
-	tableIndexCache map[string]*bplus.BPlusTree
-}
-
-type SelectPayload struct {
-	Table     string   `json:"table"`
-	Columns   []string `json:"columns"`
-	WhereCol  string   `json:"where_col,omitempty"`
-	WhereVal  string   `json:"where_val,omitempty"`
-	JoinTable string   `json:"join_table,omitempty"`
-	JoinType  string   `json:"join_type,omitempty"`
-	LeftCol   string   `json:"left_col,omitempty"`
-	RightCol  string   `json:"right_col,omitempty"`
-}
-
-type UpdatePayload struct {
-	Table     string                    `json:"table"`
-	SetExprs  map[string]ExpressionNode `json:"set_exprs"`
-	WhereExpr *ExpressionNode           `json:"where_expr,omitempty"`
-}
-
-// ExpressionNode represents an expression tree for evaluation
-type ExpressionNode struct {
-	Type    int             `json:"type"` // 0=LITERAL, 1=COLUMN, 2=BINARY, 3=COMPARISON
-	Literal interface{}     `json:"literal,omitempty"`
-	Column  string          `json:"column,omitempty"`
-	Op      string          `json:"op,omitempty"`
-	Left    *ExpressionNode `json:"left,omitempty"`
-	Right   *ExpressionNode `json:"right,omitempty"`
+	stack [][]byte
 }

@@ -1,34 +1,38 @@
 package executor
 
 /*
-VM (VDBE) - Orchestrates operations, does NOT write to disk
+ VM (VDBE) - Orchestrates operations, does NOT write to disk
     ↓
-    ├─→ HeapFileManager - Writes ROW DATA to disk
-    ├─→ B+ Tree - Writes INDEX DATA to disk
-    └─→ WAL - fsync operations to Disk → Replay Logs
+    ├─→ StorageEngine - Coordinates heap, index, WAL, catalog, txn
+    │       ├─→ HeapFileManager  - Row storage (insert/get/update/delete)
+    │       ├─→ IndexFileManager - B+ tree primary key index
+    │       ├─→ WALManager       - Write-ahead log (crash recovery)
+    │       ├─→ CatalogManager   - Schema + file ID metadata
+    │       └─→ TxnManager       - Transaction lifecycle
+    ↓
+    DiskManager  - OS file handles, global↔local page ID mapping
+    BufferPool   - Page cache, pinning, LRU eviction, dirty flushing
+
+
+	The virtual machine executes bytecode instructions compiled from parsed SQL.
+	It does not touch disk directly — all persistence goes through the StorageEngine.
+
 */
 
 import (
-	bplus "DaemonDB/bplustree"
-	heapfile "DaemonDB/heapfile_manager"
-	"DaemonDB/types"
-	"DaemonDB/wal_manager"
+	storageengine "DaemonDB/storage_engine"
 	"fmt"
 )
 
-func NewVM(tree *bplus.BPlusTree, heapFileManager *heapfile.HeapFileManager, walManager *wal_manager.WALManager) *VM {
+/*
+This file is the main start of the VM
+It has the Execute function which has a Switch Case based on which the Instruction are decided to be executed
+*/
+
+func NewVM(engine *storageengine.StorageEngine) *VM {
 	return &VM{
-		tree:              tree,
-		WalManager:        walManager,
-		heapfileManager:   heapFileManager,
-		TxnManager:        NewTxnManager(),
-		CheckpointManager: nil,
-		stack:             make([][]byte, 0),
-		currDb:            "demoDB",
-		tableToFileId:     make(map[string]uint32),
-		heapFileCounter:   1,
-		tableSchemas:      make(map[string]types.TableSchema),
-		tableIndexCache:   make(map[string]*bplus.BPlusTree),
+		storageEngine: engine,
+		stack:         make([][]byte, 0),
 	}
 }
 
@@ -46,18 +50,6 @@ func (vm *VM) Execute(instructions []Instruction) error {
 		case OP_CREATE_DB:
 			return vm.ExecuteCreateDatabase(instr.Value)
 
-		case OP_SHOW_DB:
-			databases, err := vm.ExecuteShowDatabases()
-			if err != nil {
-				fmt.Printf("Error: %v\n", err)
-			} else {
-				fmt.Println("Databases:")
-				for _, db := range databases {
-					fmt.Printf("  - %s\n", db)
-				}
-			}
-			return nil
-
 		case OP_USE_DB:
 			return vm.ExecuteUseDatabase(instr.Value)
 
@@ -74,34 +66,19 @@ func (vm *VM) Execute(instructions []Instruction) error {
 			return vm.ExecuteUpdate(instr.Value)
 
 		case OP_TXN_BEGIN:
-			vm.currentTxn = vm.TxnManager.Begin()
-			op := &types.Operation{
-				Type:  types.OpTxnBegin,
-				TxnID: vm.currentTxn.ID,
-			}
-			_, err := vm.WalManager.AppendOperation(op)
+			t, err := vm.storageEngine.BeginTransaction()
 			if err != nil {
-				return err
+				return fmt.Errorf("BEGIN failed: %w", err)
 			}
-			if err := vm.WalManager.Sync(); err != nil {
-				return err
-			}
+			vm.currentTxn = t
 			return nil
 
 		case OP_TXN_COMMIT:
 			if vm.currentTxn == nil {
 				return fmt.Errorf("no active transaction")
 			}
-			op := &types.Operation{
-				Type:  types.OpTxnCommit,
-				TxnID: vm.currentTxn.ID,
-			}
-			_, err := vm.WalManager.AppendOperation(op)
-			if err != nil {
-				return err
-			}
-			if err := vm.WalManager.Sync(); err != nil {
-				return err
+			if err := vm.storageEngine.CommitTransaction(vm.currentTxn.ID); err != nil {
+				return fmt.Errorf("COMMIT failed: %w", err)
 			}
 			vm.currentTxn = nil
 			return nil
@@ -110,30 +87,9 @@ func (vm *VM) Execute(instructions []Instruction) error {
 			if vm.currentTxn == nil {
 				return fmt.Errorf("no active transaction")
 			}
-			op := &types.Operation{
-				Type:  types.OpTxnAbort,
-				TxnID: vm.currentTxn.ID,
+			if err := vm.storageEngine.AbortTransaction(vm.currentTxn); err != nil {
+				return fmt.Errorf("ROLLBACK failed: %w", err)
 			}
-			if _, err := vm.WalManager.AppendOperation(op); err != nil {
-				return err
-			}
-			if err := vm.WalManager.Sync(); err != nil {
-				return err
-			}
-			for i := len(vm.currentTxn.InsertedRows) - 1; i >= 0; i-- {
-				ins := vm.currentTxn.InsertedRows[i]
-				rp := ins.RowPtr
-				if err := vm.heapfileManager.DeleteRow(&rp, op.LSN); err != nil {
-					return fmt.Errorf("rollback heap delete failed (table=%s file=%d page=%d slot=%d): %w",
-						ins.Table, rp.FileID, rp.PageNumber, rp.SlotIndex, err)
-				}
-				btree, err := vm.GetOrCreateIndex(ins.Table)
-				if err != nil {
-					return fmt.Errorf("rollback index open failed (table=%s): %w", ins.Table, err)
-				}
-				btree.Delete(ins.PrimaryKey)
-			}
-			vm.currentTxn.State = TxnAborted
 			vm.currentTxn = nil
 			return nil
 

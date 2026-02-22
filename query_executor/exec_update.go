@@ -4,14 +4,21 @@ import (
 	"DaemonDB/types"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
+/*
+This file contains update query for the table
+the vm function does the pre processing like unmarshling the payload sent in the query
+begins an auto transaction
+scan for the row pointers that are present for the target table, and do the necessary updates in those rows
+
+includes the helper functions for update set clause like expression evaluator, value comparator, type converter
+*/
+
 // ExecuteUpdate handles UPDATE statements
 func (vm *VM) ExecuteUpdate(tableName string) error {
-	if err := vm.RequireDatabase(); err != nil {
+	if err := vm.storageEngine.RequireDatabase(); err != nil {
 		return fmt.Errorf("no database selected. Run: USE <dbname>")
 	}
 
@@ -21,8 +28,8 @@ func (vm *VM) ExecuteUpdate(tableName string) error {
 	payloadJSON := vm.stack[len(vm.stack)-1]
 	vm.stack = vm.stack[:len(vm.stack)-1]
 
-	var payload UpdatePayload
-	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+	var updatePayload types.UpdatePayload
+	if err := json.Unmarshal(payloadJSON, &updatePayload); err != nil {
 		return fmt.Errorf("invalid update payload: %w", err)
 	}
 
@@ -30,68 +37,24 @@ func (vm *VM) ExecuteUpdate(tableName string) error {
 	if vm.currentTxn == nil { // check if there is no running transaction
 		err := vm.autoTransactionBegin()
 		if err != nil {
-			return fmt.Errorf("failed to auto commit: %w", err)
+			return fmt.Errorf("failed to auto-begin transaction: %w", err)
 		}
 	}
 
-	// Load table schema
-	schemaPath := filepath.Join(DB_ROOT, vm.currDb, "tables", tableName+"_schema.json")
-	data, err := os.ReadFile(schemaPath)
+	rowPtrs, tableSchema, err := vm.storageEngine.Scan(vm.currentTxn, tableName)
 	if err != nil {
-		return fmt.Errorf("table not found %s: %w", tableName, err)
-	}
-
-	var schema types.TableSchema
-	if err := json.Unmarshal(data, &schema); err != nil {
-		return fmt.Errorf("invalid schema: %w", err)
-	}
-
-	// Get heap file
-	fileID, ok := vm.tableToFileId[tableName]
-	if !ok {
-		return fmt.Errorf("heap file not found for table '%s'", tableName)
-	}
-
-	hf, err := vm.heapfileManager.GetHeapFileByID(fileID)
-	if err != nil {
-		return fmt.Errorf("failed to get heapfile: %w", err)
-	}
-
-	// Get all row pointers
-	rowPtrs := hf.GetAllRowPointers()
-	if len(rowPtrs) == 0 {
-		fmt.Println("table is empty, no rows to update")
-		if vm.autoTxn {
-			return vm.autoTransactionEnd() // Close the auto txn just opened
-		}
-		return nil
+		return err
 	}
 
 	updatedCount := 0
 
 	// Iterate through all rows
-	for _, rp := range rowPtrs {
-		raw, err := vm.heapfileManager.GetRow(rp)
-		if err != nil {
-			fmt.Printf("error reading row (Page %d Slot %d): %v\n", rp.PageNumber, rp.SlotIndex, err)
-			continue
-		}
-
-		values, err := vm.DeserializeRow(raw, schema.Columns)
-		if err != nil {
-			fmt.Printf("error deserializing row (Page %d Slot %d): %v\n", rp.PageNumber, rp.SlotIndex, err)
-			continue
-		}
-
-		// Create a map of column name -> value for easy access
-		rowData := make(map[string]interface{})
-		for i, col := range schema.Columns {
-			rowData[strings.ToLower(col.Name)] = values[i]
-		}
+	for _, row := range rowPtrs {
+		rowData := row.ToMap()
 
 		// Evaluate WHERE condition
-		if payload.WhereExpr != nil {
-			match, err := vm.evaluateExpression(payload.WhereExpr, rowData, schema)
+		if updatePayload.WhereExpr != nil {
+			match, err := vm.evaluateExpression(updatePayload.WhereExpr, rowData, tableSchema)
 			if err != nil {
 				return fmt.Errorf("error evaluating WHERE: %w", err)
 			}
@@ -101,73 +64,29 @@ func (vm *VM) ExecuteUpdate(tableName string) error {
 		}
 
 		// Apply SET expressions
-		modified := false
-		for colName, expr := range payload.SetExprs {
-			newValue, err := vm.evaluateExpressionValue(&expr, rowData, schema)
+		newRow := row.Row.Clone()
+
+		for colName, expr := range updatePayload.SetExprs {
+			val, err := vm.evaluateExpressionValue(&expr, rowData, tableSchema)
 			if err != nil {
-				return fmt.Errorf("error evaluating SET expression for %s: %w", colName, err)
+				return err
 			}
+			newRow.Set(colName, val)
+		}
 
-			// Find column index
-			colIdx := -1
-			for i, col := range schema.Columns {
-				if strings.EqualFold(col.Name, colName) {
-					colIdx = i
-					break
-				}
+		if err := vm.storageEngine.UpdateRow(vm.currentTxn, tableName, row.Pointer, newRow); err != nil {
+			if vm.autoTxn {
+				_ = vm.autoTransactionAbort()
 			}
-
-			if colIdx == -1 {
-				return fmt.Errorf("column %s not found in table", colName)
-			}
-
-			// Update the value
-			values[colIdx] = newValue
-			rowData[strings.ToLower(colName)] = newValue
-			modified = true
-		}
-
-		if !modified {
-			continue
-		}
-
-		// Serialize updated row
-		newRow, err := vm.SerializeRow(schema.Columns, values)
-		if err != nil {
-			return fmt.Errorf("failed to serialize updated row: %w", err)
-		}
-
-		// Log to WAL
-		op := &types.Operation{
-			Type:    types.OpUpdate,
-			TxnID:   vm.currentTxn.ID,
-			Table:   tableName,
-			RowData: newRow,
-			RowPtr:  rp,
-		}
-		lsn, err := vm.WalManager.AppendOperation(op)
-		op.LSN = lsn
-		if err != nil {
-			return fmt.Errorf("wal append failed: %w", err)
-		}
-
-		// Update the heap file
-		if err := vm.heapfileManager.UpdateRow(rp, newRow, lsn); err != nil {
-			return fmt.Errorf("failed to update row in heap: %w", err)
+			return fmt.Errorf("failed to update row: %w", err)
 		}
 
 		updatedCount++
 	}
 
-	// Sync WAL (if the db failed during the loop only, the whole command was ignored, this will keep the data as if the command never ran)
-	if err := vm.WalManager.Sync(); err != nil {
-		return fmt.Errorf("wal sync failed: %w", err)
-	}
-
-	if vm.autoTxn == true { // check if this command was autoCommited
-		err := vm.autoTransactionEnd()
-		if err != nil {
-			return fmt.Errorf("failed to auto commit: %w", err)
+	if vm.autoTxn == true {
+		if err := vm.autoTransactionCommit(); err != nil {
+			return fmt.Errorf("failed to auto-commit: %w", err)
 		}
 	}
 
@@ -176,7 +95,7 @@ func (vm *VM) ExecuteUpdate(tableName string) error {
 }
 
 // evaluateExpression evaluates a comparison expression and returns true/false
-func (vm *VM) evaluateExpression(expr *ExpressionNode, rowData map[string]interface{}, schema types.TableSchema) (bool, error) {
+func (vm *VM) evaluateExpression(expr *types.ExpressionNode, rowData map[string]interface{}, schema types.TableSchema) (bool, error) {
 	if expr.Type != 3 { // EXPR_COMPARISON
 		return false, fmt.Errorf("WHERE expression must be a comparison")
 	}
@@ -195,7 +114,7 @@ func (vm *VM) evaluateExpression(expr *ExpressionNode, rowData map[string]interf
 }
 
 // evaluateExpressionValue evaluates an expression and returns its value
-func (vm *VM) evaluateExpressionValue(expr *ExpressionNode, rowData map[string]interface{}, schema types.TableSchema) (interface{}, error) {
+func (vm *VM) evaluateExpressionValue(expr *types.ExpressionNode, rowData map[string]interface{}, schema types.TableSchema) (interface{}, error) {
 	switch expr.Type {
 	case 0: // EXPR_LITERAL
 		return expr.Literal, nil

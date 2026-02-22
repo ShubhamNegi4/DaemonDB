@@ -3,6 +3,7 @@ package codegen
 import (
 	executor "DaemonDB/query_executor"
 	"DaemonDB/query_parser/parser"
+	"DaemonDB/types"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -114,7 +115,7 @@ func EmitBytecode(stmt parser.Statement) ([]executor.Instruction, error) {
 		whereCol := s.WhereCol
 		whereVal := s.WhereValue
 		// package select metadata as JSON for executor
-		payload := executor.SelectPayload{
+		payload := types.SelectPayload{
 			Table:     s.Table,
 			WhereCol:  whereCol,
 			WhereVal:  whereVal,
