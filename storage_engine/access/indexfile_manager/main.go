@@ -132,3 +132,29 @@ func (ifm *IndexFileManager) LoadIndex(tableName string, IndexFileID uint32) err
 	ifm.indexes[tableName] = btree
 	return nil
 }
+
+func (ifm *IndexFileManager) DropIndex(tableName string) error {
+
+	ifm.mu.Lock()
+	defer ifm.mu.Unlock()
+
+	// close and remove cached B+ tree if loaded
+	if btree, exists := ifm.indexes[tableName]; exists {
+		if err := btree.Close(); err != nil {
+			return fmt.Errorf("failed to close index for table '%s': %w", tableName, err)
+		}
+		delete(ifm.indexes, tableName)
+	}
+
+	// compute index path
+	indexKey := fmt.Sprintf("%s_primary", tableName)
+	indexPath := filepath.Join(ifm.baseDir, indexKey+".idx")
+
+	// remove file from disk
+	err := os.Remove(indexPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	return nil
+}

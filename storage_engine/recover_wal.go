@@ -116,6 +116,8 @@ func (se *StorageEngine) RecoverFromWAL() error {
 			err = se.replayUpdate(op)
 		case types.OpTruncateTable:
 			err = se.replayTruncate(op)
+		case types.OpDrop:
+			err = se.replayDrop(op)
 		}
 
 		if err != nil {
@@ -309,4 +311,14 @@ func (se *StorageEngine) replayTruncate(op *types.Operation) error {
 	}
 
 	return nil
+}
+
+func (se *StorageEngine) replayDrop(op *types.Operation) error {
+
+	// If table already gone, nothing to do
+	if !se.CatalogManager.TableExists(op.Table) {
+		return nil
+	}
+
+	return se.DropTable(op.Table)
 }

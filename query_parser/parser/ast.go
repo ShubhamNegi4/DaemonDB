@@ -8,6 +8,10 @@ type CreateDatabaseStmt struct {
 	DbName string
 }
 
+type DropStatement struct {
+	Table string
+}
+
 // SHOW DATABASE statement
 type ShowDatabasesStmt struct {
 }

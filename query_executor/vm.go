@@ -74,6 +74,15 @@ func (vm *VM) Execute(instructions []Instruction) error {
 				return err
 			}
 
+		case OP_DROP_TABLE:
+
+			table := instr.Value
+
+			err := vm.ExecDropTable(table)
+			if err != nil {
+				return err
+			}
+
 		case OP_TXN_BEGIN:
 			t, err := vm.storageEngine.BeginTransaction()
 			if err != nil {

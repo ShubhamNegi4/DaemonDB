@@ -20,6 +20,7 @@ const (
 	// DDL (for WAL replay; VM will log these when DROP is implemented)
 	OpDrop          OperationType = 9
 	OpTruncateTable OperationType = 10
+	OpDropTable     OperationType = 11
 )
 
 type Operation struct {

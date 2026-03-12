@@ -152,3 +152,17 @@ func (hfm *HeapFileManager) LoadHeapFile(catalogFileID uint32, tableName string)
 
 	return hf, nil
 }
+
+func (hm *HeapFileManager) DropHeapFile(fileID uint32) error {
+
+	hf, err := hm.GetHeapFileByID(fileID)
+	if err != nil {
+		return err
+	}
+
+	// remove from manager cache
+	delete(hm.files, fileID)
+
+	// delete heap file from disk
+	return os.Remove(hf.filePath)
+}

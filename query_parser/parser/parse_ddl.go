@@ -186,3 +186,26 @@ func (p *Parser) parseTruncateStatement() (*TruncateStatement, error) {
 
 	return stmt, nil
 }
+
+func (p *Parser) parseDropTable() (Statement, error) {
+
+	// expect TABLE keyword
+	p.nextToken()
+
+	if p.curToken.Value != "TABLE" && p.curToken.Value != "table" {
+		return nil, fmt.Errorf("expected TABLE after DROP")
+	}
+
+	// move to table name
+	p.nextToken()
+
+	if p.curToken.Kind != lex.IDENT {
+		return nil, fmt.Errorf("expected table name after DROP TABLE")
+	}
+
+	stmt := &DropStatement{
+		Table: p.curToken.Value,
+	}
+
+	return stmt, nil
+}

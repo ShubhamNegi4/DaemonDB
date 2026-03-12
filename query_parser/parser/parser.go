@@ -58,10 +58,11 @@ func (p *Parser) ParseStatement() (Statement, error) {
 		return p.parseUpdate()
 	case lex.TRUNCATE:
 		return p.parseTruncate()
+
 	case lex.USE:
 		return p.parseUseDatabase()
 	case lex.DROP:
-		return p.parseDrop()
+		return p.parseDropTable()
 	case lex.IDENT:
 		if p.curToken.Value == "create" || p.curToken.Value == "CREATE" {
 			p.nextToken()

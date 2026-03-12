@@ -21,6 +21,9 @@ const (
 	OP_SELECT
 	OP_UPDATE
 	OP_TRUNCATE
+	OP_DROP_TABLE
+
+	// arithmetic
 	OP_ADD
 	OP_SUB
 	OP_MUL
