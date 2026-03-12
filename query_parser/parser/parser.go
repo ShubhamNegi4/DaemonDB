@@ -58,6 +58,8 @@ func (p *Parser) ParseStatement() (Statement, error) {
 		return p.parseUpdate()
 	case lex.TRUNCATE:
 		return p.parseTruncate()
+	case lex.DELETE:
+		return p.parseDelete()
 
 	case lex.USE:
 		return p.parseUseDatabase()

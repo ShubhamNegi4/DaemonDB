@@ -112,6 +112,7 @@ func (se *StorageEngine) RecoverFromWAL() error {
 		// 	err = se.replayDrop(op)
 		case types.OpDelete:
 			err = se.replayDelete(op)
+
 		case types.OpUpdate:
 			err = se.replayUpdate(op)
 		case types.OpTruncateTable:
@@ -233,26 +234,6 @@ func (se *StorageEngine) replayInsert(op *types.Operation) error {
 // 	return se.DropTable(op.Table)
 // }
 
-func (se *StorageEngine) replayDelete(op *types.Operation) error {
-
-	if !se.CatalogManager.TableExists(op.Table) {
-		return fmt.Errorf("replayDelete: table '%s' does not exist at LSN %d", op.Table, op.LSN)
-	}
-	// Skip if page already has this write
-	fileID, err := se.CatalogManager.GetTableFileID(op.Table)
-	if err != nil {
-		return err
-	}
-	pageLSN, err := se.HeapManager.GetPageLSN(fileID, op.RowPtr.PageNumber)
-	if err == nil && pageLSN >= op.LSN {
-		fmt.Printf("  replayDelete: skipping LSN %d — page already up to date\n", op.LSN)
-		return nil
-	}
-
-	rp := op.RowPtr
-	return se.HeapManager.DeleteRow(&rp, op.LSN)
-}
-
 func (se *StorageEngine) replayUpdate(op *types.Operation) error {
 	if op.RowData == nil {
 		return fmt.Errorf("replayUpdate: nil row data at LSN %d", op.LSN)
@@ -321,4 +302,14 @@ func (se *StorageEngine) replayDrop(op *types.Operation) error {
 	}
 
 	return se.DropTable(op.Table)
+}
+
+func (se *StorageEngine) replayDelete(op *types.Operation) error {
+
+	// If table doesn't exist anymore, ignore
+	if !se.CatalogManager.TableExists(op.Table) {
+		return nil
+	}
+
+	return se.DeleteRows(op.Table)
 }

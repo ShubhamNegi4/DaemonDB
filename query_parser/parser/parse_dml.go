@@ -180,3 +180,24 @@ func (p *Parser) parsePrimary() *ValueExpr {
 
 	return nil
 }
+
+func (p *Parser) parseDelete() (Statement, error) {
+
+	// move to FROM
+	p.nextToken()
+
+	if err := p.expect(lex.FROM); err != nil {
+		return nil, fmt.Errorf("expected FROM after DELETE")
+	}
+
+	// move to table name
+	p.nextToken()
+
+	if err := p.expect(lex.IDENT); err != nil {
+		return nil, fmt.Errorf("expected table name after DELETE FROM")
+	}
+
+	return &DeleteStatement{
+		Table: p.curToken.Value,
+	}, nil
+}

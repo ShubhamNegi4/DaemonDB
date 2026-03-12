@@ -189,6 +189,8 @@ func KeyIdentKind(str string) TokenKind {
 		return INSERT
 	case "TRUNCATE":
 		return TRUNCATE
+	case "DELETE":
+		return DELETE
 	case "INTO":
 		return INTO
 	case "SELECT":

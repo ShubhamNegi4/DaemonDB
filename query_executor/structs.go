@@ -22,6 +22,7 @@ const (
 	OP_UPDATE
 	OP_TRUNCATE
 	OP_DROP_TABLE
+	OP_DELETE
 
 	// arithmetic
 	OP_ADD

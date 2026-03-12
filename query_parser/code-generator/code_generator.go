@@ -20,6 +20,13 @@ func EmitBytecode(stmt parser.Statement) ([]executor.Instruction, error) {
 			Op: executor.OP_TXN_BEGIN,
 		})
 
+	case *parser.DeleteStatement:
+
+		instructions = append(instructions, executor.Instruction{
+			Op:    executor.OP_DELETE,
+			Value: s.Table,
+		})
+
 	case *parser.CommitTxnStmt:
 		instructions = append(instructions, executor.Instruction{
 			Op: executor.OP_TXN_COMMIT,

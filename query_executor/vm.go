@@ -83,6 +83,14 @@ func (vm *VM) Execute(instructions []Instruction) error {
 				return err
 			}
 
+		case OP_DELETE:
+
+			table := instr.Value
+
+			if err := vm.ExecDelete(table); err != nil {
+				return err
+			}
+
 		case OP_TXN_BEGIN:
 			t, err := vm.storageEngine.BeginTransaction()
 			if err != nil {

@@ -12,6 +12,10 @@ type DropStatement struct {
 	Table string
 }
 
+type DeleteStatement struct {
+	Table string
+}
+
 // SHOW DATABASE statement
 type ShowDatabasesStmt struct {
 }

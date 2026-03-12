@@ -12,6 +12,7 @@ const (
 	INTO
 	SELECT
 	UPDATE
+	DELETE
 	SET
 	FROM
 	WHERE
