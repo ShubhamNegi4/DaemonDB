@@ -60,3 +60,30 @@ type BPlusTree struct {
 }
 
 // BufferPool structure and methods are implemented in buffer_pool.go
+
+func (tree *BPlusTree) Reset() error {
+	tree.mu.Lock()
+	defer tree.mu.Unlock()
+
+	// create a new empty leaf node
+	root, err := tree.newNode(NodeLeaf)
+	if err != nil {
+		return err
+	}
+	defer tree.releaseNode(root, true)
+
+	root.keys = root.keys[:0]
+	root.values = root.values[:0]
+	root.children = nil
+	root.next = 0
+	root.parent = 0
+	root.isDirty = true
+
+	if err := tree.writeNode(root); err != nil {
+		return err
+	}
+
+	tree.root = root.pageID
+
+	return nil
+}

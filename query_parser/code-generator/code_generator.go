@@ -25,6 +25,13 @@ func EmitBytecode(stmt parser.Statement) ([]executor.Instruction, error) {
 			Op: executor.OP_TXN_COMMIT,
 		})
 
+	case *parser.TruncateStatement:
+
+		instructions = append(instructions, executor.Instruction{
+			Op:    executor.OP_TRUNCATE,
+			Value: s.Table,
+		})
+
 	case *parser.RollbackTxnStmt:
 		instructions = append(instructions, executor.Instruction{
 			Op: executor.OP_TXN_ROLLBACK,

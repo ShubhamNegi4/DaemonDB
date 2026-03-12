@@ -140,3 +140,25 @@ func getFileIDs(files map[uint32]*HeapFile) []uint32 {
 	}
 	return keys
 }
+
+// for truncate command
+func (hm *HeapFileManager) TruncateHeapFile(fileID uint32, lsn uint64) error {
+
+	hf, err := hm.GetHeapFileByID(fileID)
+	if err != nil {
+		return err
+	}
+
+	// Get all row pointers from heap
+	rowPtrs := hf.GetAllRowPointers()
+
+	// Delete rows one by one
+	for _, rp := range rowPtrs {
+
+		if err := hm.DeleteRow(&rp, lsn); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

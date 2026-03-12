@@ -17,6 +17,12 @@ type UseDatabaseStatement struct {
 	DbName string
 }
 
+type TruncateStatement struct {
+	Table string
+}
+
+func (t *TruncateStatement) statementNode() {}
+
 // SELECT statement
 type SelectStmt struct {
 	Columns    []string

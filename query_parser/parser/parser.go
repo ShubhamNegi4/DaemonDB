@@ -56,6 +56,8 @@ func (p *Parser) ParseStatement() (Statement, error) {
 		return p.parseInsert()
 	case lex.UPDATE:
 		return p.parseUpdate()
+	case lex.TRUNCATE:
+		return p.parseTruncate()
 	case lex.USE:
 		return p.parseUseDatabase()
 	case lex.DROP:
@@ -76,10 +78,35 @@ func (p *Parser) ParseStatement() (Statement, error) {
 }
 
 var (
-	ErrExpectedDatabaseName = errors.New("expected database name after USE")
+	ErrExpectedDatabaseName    = errors.New("expected database name after USE")
 	ErrExpectedKeyAfterForeign = errors.New("expected KEY after FOREIGN")
-	ErrExpectedReferences = errors.New("expected REFERENCES in foreign key")
-	ErrExpectedValues = errors.New("expected VALUES")
-	ErrExpectedParen = errors.New("expected (")
+	ErrExpectedReferences      = errors.New("expected REFERENCES in foreign key")
+	ErrExpectedValues          = errors.New("expected VALUES")
+	ErrExpectedParen           = errors.New("expected (")
 	ErrUnexpectedTokenInValues = errors.New("unexpected token in values list")
 )
+
+func (p *Parser) parseTruncate() (Statement, error) {
+
+	// move to TABLE
+	p.nextToken()
+
+	if err := p.expect(lex.TABLE); err != nil {
+		return nil, fmt.Errorf("expected TABLE after TRUNCATE")
+	}
+
+	// move to table name
+	p.nextToken()
+
+	if err := p.expect(lex.IDENT); err != nil {
+		return nil, fmt.Errorf("expected table name after TRUNCATE TABLE")
+	}
+
+	table := p.curToken.Value
+
+	p.nextToken()
+
+	return &TruncateStatement{
+		Table: table,
+	}, nil
+}

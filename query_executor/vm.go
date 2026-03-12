@@ -65,6 +65,15 @@ func (vm *VM) Execute(instructions []Instruction) error {
 		case OP_UPDATE:
 			return vm.ExecuteUpdate(instr.Value)
 
+		case OP_TRUNCATE:
+
+			table := instr.Value
+
+			err := vm.ExecTruncate(table)
+			if err != nil {
+				return err
+			}
+
 		case OP_TXN_BEGIN:
 			t, err := vm.storageEngine.BeginTransaction()
 			if err != nil {

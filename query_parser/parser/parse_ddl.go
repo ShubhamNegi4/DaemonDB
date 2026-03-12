@@ -2,6 +2,7 @@ package parser
 
 import (
 	lex "DaemonDB/query_parser/lexer"
+	"fmt"
 	"strings"
 )
 
@@ -159,4 +160,29 @@ func (p *Parser) parseCreateTable() (*CreateTableStmt, error) {
 		Columns:     cols,
 		ForeignKeys: fks,
 	}, nil
+}
+
+func (p *Parser) parseTruncateStatement() (*TruncateStatement, error) {
+
+	// move to TABLE
+	p.nextToken()
+
+	if err := p.expect(lex.TABLE); err != nil {
+		return nil, fmt.Errorf("expected TABLE after TRUNCATE")
+	}
+
+	// move to table name
+	p.nextToken()
+
+	if err := p.expect(lex.IDENT); err != nil {
+		return nil, fmt.Errorf("expected table name after TRUNCATE TABLE")
+	}
+
+	stmt := &TruncateStatement{
+		Table: p.curToken.Value,
+	}
+
+	p.nextToken()
+
+	return stmt, nil
 }

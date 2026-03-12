@@ -114,6 +114,8 @@ func (se *StorageEngine) RecoverFromWAL() error {
 			err = se.replayDelete(op)
 		case types.OpUpdate:
 			err = se.replayUpdate(op)
+		case types.OpTruncateTable:
+			err = se.replayTruncate(op)
 		}
 
 		if err != nil {
@@ -280,4 +282,31 @@ func printIds(m map[uint64]bool) []uint64 {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+func (se *StorageEngine) replayTruncate(op *types.Operation) error {
+
+	// If table doesn't exist, skip
+	if !se.CatalogManager.TableExists(op.Table) {
+		return nil
+	}
+
+	// Get heap file ID
+	fileID, err := se.CatalogManager.GetTableFileID(op.Table)
+	if err != nil {
+		return err
+	}
+
+	// Truncate heap file
+	if err := se.HeapManager.TruncateHeapFile(fileID, op.LSN); err != nil {
+		return err
+	}
+
+	// Reset index
+	index, err := se.getIndex(op.Table)
+	if err == nil {
+		index.Reset()
+	}
+
+	return nil
 }
