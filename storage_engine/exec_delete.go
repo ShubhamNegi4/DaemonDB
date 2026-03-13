@@ -3,11 +3,12 @@ package storageengine
 import (
 	"DaemonDB/types"
 	"fmt"
+	"strings"
 )
 
-func (se *StorageEngine) DeleteRows(tableName string) error {
+func (se *StorageEngine) DeleteRows(tableName string, whereCol string, whereVal string) error {
 
-	// Ensure DB selected
+	// Ensure database selected
 	if err := se.RequireDatabase(); err != nil {
 		return err
 	}
@@ -25,8 +26,10 @@ func (se *StorageEngine) DeleteRows(tableName string) error {
 
 	// WAL record
 	op := &types.Operation{
-		Type:  types.OpDelete,
-		Table: tableName,
+		Type:     types.OpDelete,
+		Table:    tableName,
+		WhereCol: whereCol,
+		WhereVal: whereVal,
 	}
 
 	lsn, err := se.WalManager.AppendOperation(op)
@@ -54,6 +57,21 @@ func (se *StorageEngine) DeleteRows(tableName string) error {
 	// Get index
 	index, _ := se.getIndex(tableName)
 
+	// Determine column index for WHERE
+	colIndex := -1
+	if whereCol != "" {
+		for i, col := range schema.Columns {
+			if strings.EqualFold(col.Name, whereCol) {
+				colIndex = i
+				break
+			}
+		}
+
+		if colIndex == -1 {
+			return fmt.Errorf("column '%s' not found in table '%s'", whereCol, tableName)
+		}
+	}
+
 	deleted := 0
 
 	for _, rp := range rowPtrs {
@@ -66,6 +84,15 @@ func (se *StorageEngine) DeleteRows(tableName string) error {
 		values, err := se.DeserializeRow(rawRow, schema.Columns)
 		if err != nil {
 			continue
+		}
+
+		// WHERE filtering
+		if whereCol != "" {
+			val := values[colIndex]
+
+			if fmt.Sprintf("%v", val) != whereVal {
+				continue
+			}
 		}
 
 		// Remove index entry

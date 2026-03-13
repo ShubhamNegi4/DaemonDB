@@ -2,6 +2,7 @@ package parser
 
 import (
 	lex "DaemonDB/query_parser/lexer"
+	"DaemonDB/types"
 	"fmt"
 	"strconv"
 	"strings"
@@ -183,21 +184,59 @@ func (p *Parser) parsePrimary() *ValueExpr {
 
 func (p *Parser) parseDelete() (Statement, error) {
 
-	// move to FROM
+	// DELETE already in curToken
+
 	p.nextToken()
 
 	if err := p.expect(lex.FROM); err != nil {
 		return nil, fmt.Errorf("expected FROM after DELETE")
 	}
 
-	// move to table name
 	p.nextToken()
 
 	if err := p.expect(lex.IDENT); err != nil {
 		return nil, fmt.Errorf("expected table name after DELETE FROM")
 	}
 
-	return &DeleteStatement{
+	stmt := &DeleteStatement{
 		Table: p.curToken.Value,
-	}, nil
+	}
+
+	// Move to next token
+	p.nextToken()
+
+	// Optional WHERE clause
+	if p.curToken.Kind == lex.WHERE {
+
+		p.nextToken()
+
+		if err := p.expect(lex.IDENT); err != nil {
+			return nil, fmt.Errorf("expected column name after WHERE")
+		}
+
+		column := p.curToken.Value
+
+		p.nextToken()
+
+		operator := p.curToken.Value
+
+		p.nextToken()
+
+		value := p.curToken.Value
+
+		stmt.Where = &types.ExpressionNode{
+			Type: 3,
+			Op:   operator,
+			Left: &types.ExpressionNode{
+				Type:   1,
+				Column: column,
+			},
+			Right: &types.ExpressionNode{
+				Type:    0,
+				Literal: value,
+			},
+		}
+	}
+
+	return stmt, nil
 }

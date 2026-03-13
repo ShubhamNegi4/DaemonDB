@@ -36,6 +36,11 @@ type Operation struct {
 	RowPtr  RowPointer `json:"row_ptr,omitempty"`
 	OldPtr  RowPointer `json:"old_ptr,omitempty"`
 
+	Where *ExpressionNode `json:"where,omitempty"`
+
+	WhereCol string `json:"where_col,omitempty"`
+	WhereVal string `json:"where_val,omitempty"`
+
 	// DDL
 	Schema *TableSchema `json:"schema,omitempty"`
 }

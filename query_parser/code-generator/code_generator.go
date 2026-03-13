@@ -22,9 +22,25 @@ func EmitBytecode(stmt parser.Statement) ([]executor.Instruction, error) {
 
 	case *parser.DeleteStatement:
 
+		deleteStmt := stmt.(*parser.DeleteStatement)
+
+		payload := types.SelectPayload{
+			Table: deleteStmt.Table,
+		}
+
+		if deleteStmt.Where != nil {
+			payload.WhereCol = deleteStmt.Where.Left.Column
+			payload.WhereVal = fmt.Sprintf("%v", deleteStmt.Where.Right.Literal)
+		}
+
+		payloadJSON, err := json.Marshal(payload)
+		if err != nil {
+			return nil, fmt.Errorf("failed to serialize delete payload: %w", err)
+		}
+
 		instructions = append(instructions, executor.Instruction{
 			Op:    executor.OP_DELETE,
-			Value: s.Table,
+			Value: string(payloadJSON),
 		})
 
 	case *parser.CommitTxnStmt:

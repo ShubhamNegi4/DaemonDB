@@ -1,5 +1,7 @@
 package parser
 
+import "DaemonDB/types"
+
 // Statement is a generic interface for all statements
 type Statement interface{}
 
@@ -14,6 +16,7 @@ type DropStatement struct {
 
 type DeleteStatement struct {
 	Table string
+	Where *types.ExpressionNode
 }
 
 // SHOW DATABASE statement

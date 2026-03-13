@@ -21,6 +21,8 @@ package executor
 
 import (
 	storageengine "DaemonDB/storage_engine"
+	"DaemonDB/types"
+	"encoding/json"
 	"fmt"
 )
 
@@ -85,9 +87,15 @@ func (vm *VM) Execute(instructions []Instruction) error {
 
 		case OP_DELETE:
 
-			table := instr.Value
+			var payload types.SelectPayload
 
-			if err := vm.ExecDelete(table); err != nil {
+			err := json.Unmarshal([]byte(instr.Value), &payload)
+			if err != nil {
+				return fmt.Errorf("failed to decode delete payload: %w", err)
+			}
+
+			err = vm.storageEngine.DeleteRows(payload.Table, payload.WhereCol, payload.WhereVal)
+			if err != nil {
 				return err
 			}
 

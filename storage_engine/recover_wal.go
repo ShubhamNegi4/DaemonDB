@@ -306,10 +306,9 @@ func (se *StorageEngine) replayDrop(op *types.Operation) error {
 
 func (se *StorageEngine) replayDelete(op *types.Operation) error {
 
-	// If table doesn't exist anymore, ignore
 	if !se.CatalogManager.TableExists(op.Table) {
 		return nil
 	}
 
-	return se.DeleteRows(op.Table)
+	return se.DeleteRows(op.Table, op.WhereCol, op.WhereVal)
 }
