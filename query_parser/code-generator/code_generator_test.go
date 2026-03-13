@@ -6,9 +6,8 @@ import (
 	"testing"
 )
 
-// TestEmitBytecode_UnsupportedStatement_ReturnsError ensures that statements
-// not yet implemented in the codegen (e.g. DROP, UPDATE) return an error instead of panicking.
-func TestEmitBytecode_UnsupportedStatement_ReturnsError(t *testing.T) {
+// TestEmitBytecode_DropTable_EmitsBytecode ensures DROP TABLE produces bytecode.
+func TestEmitBytecode_DropTable_EmitsBytecode(t *testing.T) {
 	l := lex.New("DROP TABLE x")
 	p := parser.New(l)
 	stmt, err := p.ParseStatement()
@@ -16,11 +15,11 @@ func TestEmitBytecode_UnsupportedStatement_ReturnsError(t *testing.T) {
 		t.Fatalf("parse DROP TABLE: %v", err)
 	}
 	instructions, err := EmitBytecode(stmt)
-	if err == nil {
-		t.Errorf("EmitBytecode(DropStmt) expected error, got %d instructions", len(instructions))
+	if err != nil {
+		t.Fatalf("EmitBytecode(DropStmt) unexpected error: %v", err)
 	}
-	if instructions != nil {
-		t.Errorf("EmitBytecode(DropStmt) expected nil instructions on error, got %v", instructions)
+	if len(instructions) == 0 {
+		t.Fatalf("EmitBytecode(DropStmt) expected instructions, got none")
 	}
 }
 
