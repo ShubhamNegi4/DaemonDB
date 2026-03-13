@@ -4,13 +4,15 @@ import (
 	diskmanager "DaemonDB/storage_engine/disk_manager"
 	"DaemonDB/storage_engine/page"
 	"DaemonDB/types"
+	"container/heap"
 	"encoding/binary"
 	"fmt"
+	"time"
 )
 
 /*
 This file is the main file of the bufferpool
-The buffer pool works on LRU based caching mechanism
+The buffer pool works on GDSF (Greedy Dual Size Frequency) caching mechanism
 and holds access to disk manager for flushing the pages in the cache onto the disk
 similarly if page not found in the cache, disk manager loads the page from the disk and adds in the cache for future access
 
@@ -19,18 +21,27 @@ Pages are identified by globalPageID
 
 // NewBufferPool creates a new buffer pool with the given capacity
 func NewBufferPool(capacity int, diskManager *diskmanager.DiskManager) *BufferPool {
-	return &BufferPool{
+	bp := &BufferPool{
 		pages:       make(map[int64]*page.Page, capacity),
 		capacity:    capacity,
 		diskManager: diskManager,
-		accessOrder: make([]int64, 0, capacity),
 	}
+	bp.policy.meta = make(map[int64]*gdsfMeta, capacity)
+	bp.policy.pq = make(gdsfPQ, 0, capacity)
+	heap.Init(&bp.policy.pq)
+	return bp
 }
 
 func (bp *BufferPool) SetWALManager(wal WALFlushedLSNGetter) {
 	bp.mu.Lock()
 	defer bp.mu.Unlock()
 	bp.walManager = wal
+}
+
+func (bp *BufferPool) SetEvictDebug(enabled bool) {
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
+	bp.debugEvict = enabled
 }
 
 // FetchPage retrieves a page from the buffer pool, loading from disk if necessary
@@ -42,8 +53,8 @@ func (bp *BufferPool) FetchPage(pageID int64) (*page.Page, error) {
 	// Check if page is in buffer pool
 	if pg, exists := bp.pages[pageID]; exists {
 		fmt.Printf("[BufferPool] HIT  pageID=%d pinCount=%d\n", pageID, pg.PinCount)
-		// Update LRU access order
-		bp.updateAccessOrder(pageID)
+		// Update GDSF access metadata (frequency).
+		bp.gdsfOnAccess(pageID, 0)
 		// Increment pin count
 		pg.Lock()
 		pg.PinCount++
@@ -57,10 +68,12 @@ func (bp *BufferPool) FetchPage(pageID int64) (*page.Page, error) {
 		return nil, fmt.Errorf("disk manager not set")
 	}
 
+	start := time.Now()
 	pg, err := bp.diskManager.ReadPage(pageID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read page %d from disk: %w", pageID, err)
 	}
+	missLatencyNS := float64(time.Since(start).Nanoseconds())
 
 	if pg.PageType == types.PageTypeHeapData {
 		if len(pg.Data) >= 8 {
@@ -69,7 +82,7 @@ func (bp *BufferPool) FetchPage(pageID int64) (*page.Page, error) {
 	}
 
 	// Add to buffer pool (may trigger eviction)
-	if err := bp.addPage(pg); err != nil {
+	if err := bp.addPage(pg, missLatencyNS); err != nil {
 		return nil, fmt.Errorf("failed to add page to buffer pool: %w", err)
 	}
 
@@ -108,7 +121,7 @@ func (bp *BufferPool) NewPage(fileID uint32, pageType types.PageType) (*page.Pag
 	pg.Unlock()
 
 	// Add to buffer pool
-	if err := bp.addPage(pg); err != nil {
+	if err := bp.addPage(pg, 0); err != nil {
 		// Pin the page
 		pg.Lock()
 		pg.PinCount--
@@ -213,91 +226,149 @@ func (bp *BufferPool) FlushAllPages() error {
 
 // addPage adds a page to the buffer pool, evicting if necessary
 // Assumes lock is already held
-func (bp *BufferPool) addPage(page *page.Page) error {
-	// If page already in pool, just update access order
+func (bp *BufferPool) addPage(page *page.Page, missLatencyNS float64) error {
+	// If page already in pool, just update GDSF.
 	if _, exists := bp.pages[page.ID]; exists {
-		bp.updateAccessOrder(page.ID)
+		bp.gdsfOnAccess(page.ID, missLatencyNS)
 		return nil
 	}
 
-	// If at capacity, evict LRU page
+	// If at capacity, evict GDSF victim (lowest key).
 	if len(bp.pages) >= bp.capacity {
-		if err := bp.evictLRU(); err != nil {
+		if err := bp.evictGDSF(); err != nil {
 			return fmt.Errorf("failed to evict page: %w", err)
 		}
 	}
 
 	// Add page to pool
 	bp.pages[page.ID] = page
-	bp.updateAccessOrder(page.ID)
+	bp.gdsfInitOrUpdate(page.ID, missLatencyNS)
 
 	return nil
 }
 
-// evictLRU evicts the least recently used unpinned page
+// evictGDSF evicts the lowest-key unpinned page under GDSF.
 // Assumes lock is already held
-func (bp *BufferPool) evictLRU() error {
-	// Find first unpinned page in access order (LRU)
-	for i := 0; i < len(bp.accessOrder); i++ {
-		pageID := bp.accessOrder[i]
-		page, exists := bp.pages[pageID]
+func (bp *BufferPool) evictGDSF() error {
+	// Temporarily hold pages we can't evict right now (pinned or WAL-blocked).
+	skipped := make([]*gdsfItem, 0, 8)
+	defer func() {
+		// Restore skipped items back into heap.
+		for _, it := range skipped {
+			heap.Push(&bp.policy.pq, it)
+		}
+	}()
 
+	for bp.policy.pq.Len() > 0 {
+		item := heap.Pop(&bp.policy.pq).(*gdsfItem)
+		meta := bp.policy.meta[item.pageID]
+		if meta == nil || meta.item != item {
+			continue
+		}
+
+		pg, exists := bp.pages[item.pageID]
 		if !exists {
-			// Remove from access order if page doesn't exist
-			bp.accessOrder = append(bp.accessOrder[:i], bp.accessOrder[i+1:]...)
-			i--
+			delete(bp.policy.meta, item.pageID)
 			continue
 		}
 
-		page.Lock()
-		pinCount := page.PinCount
-		isDirty := page.IsDirty
-
-		// Skip pinned pages
+		pg.Lock()
+		pinCount := pg.PinCount
+		isDirty := pg.IsDirty
 		if pinCount > 0 {
-			page.Unlock()
+			pg.Unlock()
+			skipped = append(skipped, item)
 			continue
 		}
 
-		fmt.Printf("[BufferPool] EVICT pageID=%d dirty=%v\n", pageID, isDirty)
-		// Flush if dirty
+		// Flush if dirty.
 		if isDirty && bp.diskManager != nil {
-			if bp.walManager != nil {
-				if page.LSN > bp.walManager.GetFlushedLSN() {
-					// Can't evict this page yet — WAL not durable
-					page.Unlock()
-					continue // skip this page, try next LRU candidate
-				}
+			if bp.walManager != nil && pg.LSN > bp.walManager.GetFlushedLSN() {
+				// Can't evict this page yet — WAL not durable.
+				pg.Unlock()
+				skipped = append(skipped, item)
+				continue
 			}
-			if err := bp.diskManager.WritePage(page); err != nil {
-				page.Unlock()
-				return fmt.Errorf("failed to write page %d during eviction: %w", pageID, err)
+			if err := bp.diskManager.WritePage(pg); err != nil {
+				pg.Unlock()
+				return fmt.Errorf("failed to write page %d during eviction: %w", item.pageID, err)
 			}
-			page.IsDirty = false
+			pg.IsDirty = false
 		}
-		page.Unlock()
 
-		// Evict the page
-		delete(bp.pages, pageID)
-		bp.accessOrder = append(bp.accessOrder[:i], bp.accessOrder[i+1:]...)
+		if bp.debugEvict {
+			fmt.Printf("[BufferPool] EVICT pageID=%d dirty=%v key=%.12f\n", item.pageID, isDirty, item.key)
+		}
+		pg.Unlock()
+
+		// Update inflation value H to victim's key.
+		bp.policy.H = item.key
+
+		// Remove from pool and metadata.
+		delete(bp.pages, item.pageID)
+		delete(bp.policy.meta, item.pageID)
 		return nil
 	}
 
 	return fmt.Errorf("all pages are pinned, cannot evict")
 }
 
-// updateAccessOrder moves a page to the end of access order (most recently used)
-// Assumes lock is already held
-func (bp *BufferPool) updateAccessOrder(pageID int64) {
-	// Remove from current position
-	for i, id := range bp.accessOrder {
-		if id == pageID {
-			bp.accessOrder = append(bp.accessOrder[:i], bp.accessOrder[i+1:]...)
-			break
-		}
+// gdsfScore computes the GDSF score using the user-provided formula:
+// Score = (Frequency × Latency) / Response_Size
+// - Frequency: float64 access count
+// - Latency: float64 nanoseconds (observed on miss); 0 if never missed
+// - Response_Size: bytes (page size)
+func (bp *BufferPool) gdsfScore(m *gdsfMeta) float64 {
+	if m == nil {
+		return 0
 	}
-	// Add to end (most recently used)
-	bp.accessOrder = append(bp.accessOrder, pageID)
+	if m.RespSizeB <= 0 {
+		return 0
+	}
+	return (m.Frequency * m.LatencyNS) / m.RespSizeB
+}
+
+func (bp *BufferPool) gdsfInitOrUpdate(pageID int64, missLatencyNS float64) {
+	meta := bp.policy.meta[pageID]
+	if meta == nil {
+		meta = &gdsfMeta{
+			Frequency: 0,
+			LatencyNS: 0,
+			RespSizeB: float64(page.PageSize),
+		}
+		bp.policy.meta[pageID] = meta
+	}
+	// If this load came from disk, record the observed miss latency.
+	if missLatencyNS > 0 {
+		meta.LatencyNS = missLatencyNS
+	}
+	// New page creation has missLatencyNS=0; leave LatencyNS unchanged.
+	meta.Frequency += 1
+
+	key := bp.policy.H + bp.gdsfScore(meta)
+	if meta.item == nil {
+		it := &gdsfItem{pageID: pageID, key: key}
+		meta.item = it
+		heap.Push(&bp.policy.pq, it)
+	} else {
+		meta.item.key = key
+		heap.Fix(&bp.policy.pq, meta.item.index)
+	}
+}
+
+func (bp *BufferPool) gdsfOnAccess(pageID int64, missLatencyNS float64) {
+	bp.gdsfInitOrUpdate(pageID, missLatencyNS)
+}
+
+func (bp *BufferPool) gdsfRequeue(pageID int64) {
+	meta := bp.policy.meta[pageID]
+	if meta == nil {
+		return
+	}
+	// Item already exists; just fix heap ordering.
+	if meta.item != nil {
+		heap.Fix(&bp.policy.pq, meta.item.index)
+	}
 }
 
 // DeletePage removes a page from the buffer pool (used after deletion)
@@ -319,12 +390,10 @@ func (bp *BufferPool) DeletePage(pageID int64) error {
 
 	// Remove from pool and access order
 	delete(bp.pages, pageID)
-	for i, id := range bp.accessOrder {
-		if id == pageID {
-			bp.accessOrder = append(bp.accessOrder[:i], bp.accessOrder[i+1:]...)
-			break
-		}
+	if meta := bp.policy.meta[pageID]; meta != nil && meta.item != nil {
+		heap.Remove(&bp.policy.pq, meta.item.index)
 	}
+	delete(bp.policy.meta, pageID)
 
 	return nil
 }

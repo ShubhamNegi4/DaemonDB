@@ -12,6 +12,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 )
 
 /*
@@ -92,7 +93,16 @@ func (se *StorageEngine) UseDatabase(name string) error {
 	diskManager := diskmanager.NewDiskManager()
 
 	// Initialize BufferPool
-	bufferPool := bufferpool.NewBufferPool(100, diskManager)
+	capacity := 100
+	if v := os.Getenv("DAEMONDB_BUFFERPOOL_CAPACITY"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			capacity = n
+		}
+	}
+	bufferPool := bufferpool.NewBufferPool(capacity, diskManager)
+	if os.Getenv("DAEMONDB_BUFFERPOOL_EVICT_DEBUG") == "1" {
+		bufferPool.SetEvictDebug(true)
+	}
 
 	// Initialize HeapFileManager
 	/*
@@ -147,7 +157,7 @@ func (se *StorageEngine) UseDatabase(name string) error {
 	se.BufferPool.SetWALManager(se.WalManager)
 
 	fmt.Printf("[DB] DiskManager initialized\n")
-	fmt.Printf("[DB] BufferPool initialized capacity=%d\n", 100)
+	fmt.Printf("[DB] BufferPool initialized capacity=%d\n", capacity)
 	fmt.Printf("[DB] HeapManager initialized dir=%s\n", tablesDir)
 	fmt.Printf("[DB] IndexManager initialized dir=%s\n", indexDir)
 	fmt.Printf("[DB] WALManager initialized dir=%s\n", logDir)

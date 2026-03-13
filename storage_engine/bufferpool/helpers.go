@@ -2,6 +2,7 @@ package bufferpool
 
 import (
 	"DaemonDB/storage_engine/page"
+	"container/heap"
 	"fmt"
 )
 
@@ -52,7 +53,10 @@ func (bp *BufferPool) Reset() error {
 
 	// Clear the pool
 	bp.pages = make(map[int64]*page.Page, bp.capacity)
-	bp.accessOrder = make([]int64, 0, bp.capacity)
+	bp.policy.H = 0
+	bp.policy.meta = make(map[int64]*gdsfMeta, bp.capacity)
+	bp.policy.pq = make(gdsfPQ, 0, bp.capacity)
+	heap.Init(&bp.policy.pq)
 
 	return nil
 }
