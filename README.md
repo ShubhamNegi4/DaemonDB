@@ -23,7 +23,7 @@ VM (VDBE) - Orchestrates operations, does NOT write to disk
             └─→ TxnManager       - Transaction lifecycle + rollback records
                     ↓
             DiskManager  - OS file handles, global↔local page ID mapping
-            BufferPool   - Page cache, pinning, LRU eviction, dirty flushing
+            BufferPool   - Page cache, pinning, GDSF eviction, dirty flushing
 ```
 ### Layered View
 
@@ -48,7 +48,7 @@ VM (VDBE) - Orchestrates operations, does NOT write to disk
            ▼          ▼
 ┌─────────────────────────────────────────┐
 │   BufferPool + DiskManager              │
-│   (4KB Pages, LRU Cache, File I/O)      │
+│   (4KB Pages, GDSF Cache, File I/O)     │
 └─────────────────────────────────────────┘
 ```
 
@@ -57,14 +57,14 @@ VM (VDBE) - Orchestrates operations, does NOT write to disk
 
 ```sql
 -- Table creation
-CREATE TABLE students ( id int primary key, name string, age int, grade string )
+CREATE TABLE students ( id int primary key, name varchar, age int, grade varchar )
 
 -- Data insertion
-INSERT INTO students VALUES ("S001", "Alice", 20, "A")
+INSERT INTO students VALUES (1, "Alice", 20, "A")
 
 -- Data querying
 SELECT * FROM students
-SELECT name, grade FROM students WHERE id = "S001"
+SELECT name, grade FROM students WHERE id = 1
 
 -- Joins
 SELECT * FROM t1 [ INNER|LEFT|RIGHT|FULL ] JOIN t2 ON col1 = col2 [ WHERE ... ]
@@ -72,6 +72,11 @@ SELECT * FROM t1 [ INNER|LEFT|RIGHT|FULL ] JOIN t2 ON col1 = col2 [ WHERE ... ]
 -- Updates
 UPDATE students SET name = "Bob" WHERE id = "S001"
 UPDATE students SET id = id + 3 WHERE id = 5
+
+-- Deletes / DDL helpers
+DELETE FROM students [ WHERE col = value ]
+TRUNCATE TABLE students
+DROP TABLE students
 
 -- Transactions
 BEGIN
@@ -99,6 +104,9 @@ The virtual machine executes bytecode compiled from parsed SQL. It does not touc
 | `OP_INSERT` | Insert a row into a table |
 | `OP_SELECT` | Query rows from a table |
 | `OP_UPDATE` | Update rows matching a WHERE clause |
+| `OP_DELETE` | Delete rows (full table or WHERE filter) |
+| `OP_TRUNCATE` | Truncate a table |
+| `OP_DROP_TABLE` | Drop a table |
 | `OP_TXN_BEGIN` | Begin an explicit transaction |
 | `OP_TXN_COMMIT` | Commit the active transaction |
 | `OP_TXN_ROLLBACK` | Rollback the active transaction |
@@ -126,15 +134,14 @@ Coordinates all subsystems. Entry points: `InsertRow`, `UpdateRow`, `DeleteRow`,
 1. Full scan (or PK lookup) to find matching rows
 2. Fetch before-image (old row data) from heap
 3. Update row in heap (may relocate if row grew)
-4. Append `OpUpdate` to WAL with **both** before-image (`OldRowData`, `OldRowPtr`) and after-image
+4. Append `OpUpdate` to WAL with after-image and pointer metadata (before-images are kept in the in-memory txn undo log)
 5. Update B+ tree index if PK changed or row relocated
 
 **Delete flow:**
-1. Find matching rows
-2. Fetch before-image for undo
-3. Tombstone slot in heap
-4. Append `OpDelete` to WAL with before-image
-5. Delete from B+ tree index
+1. Full scan and filter (optional WHERE)
+2. Delete matching rows by tombstoning heap slots
+3. Delete matching primary-key entries from the B+ tree index
+4. Append `OpDelete` to WAL (used for REDO; crash-time UNDO is limited)
 
 ---
 
@@ -179,6 +186,10 @@ Fixed-capacity page cache with GDSF-based eviction.
 - `NewPage(fileID, pageType)` allocates via `DiskManager.AllocatePage`
 - `FetchPage(globalPageID)` increments pin count — caller must `UnpinPage` when done
 
+**GDSF scoring:** \(\text{Score} = (\text{Frequency} \times \text{Latency}) / \text{ResponseSize}\). DaemonDB measures miss latency at page-load time and uses page size as the response size.
+
+**Tuning:** `DAEMONDB_BUFFERPOOL_CAPACITY` controls cache size (pages). `DAEMONDB_BUFFERPOOL_EVICT_DEBUG=1` prints eviction decisions.
+
 **Page type byte:** `WritePage` stamps `pg.Data[8] = byte(pg.PageType)` on every write. All page formats must treat byte 8 as reserved for this stamp.
 
 ---
@@ -220,7 +231,7 @@ Manages row storage in `.heap` files — one file per table.
 
 Manages primary key indexes using a B+ tree stored in `.idx` files.
 
-**File path:** `database/{db}/indexes/{tableName}_primary.idx`
+**File path:** `database/{db}/indexes/{catalogFileID}.idx`
 
 **File layout:**
 ```
@@ -260,30 +271,17 @@ Page 1+: B+ tree nodes
 
 Write-ahead log for crash recovery.
 
-**Operation record:**
-
-```go
-type Operation struct {
-    Type       OpType      // OpInsert, OpUpdate, OpDelete, OpBegin, OpCommit, OpAbort
-    TxnID      uint64
-    Table      string
-    LSN        uint64
-    RowData    []byte      // after-image (new data)
-    OldRowData []byte      // before-image (old data) — for UPDATE/DELETE undo
-    RowPtr     RowPointer  // new row location
-    OldRowPtr  RowPointer  // old row location — for UPDATE undo
-}
-```
+**Operation record (simplified):** WAL records are JSON-encoded `types.Operation` entries containing an operation type, TxnID, LSN, table name, row bytes, row pointers, and (for some operations) WHERE metadata. See `types/operations.go`.
 
 **Sync strategy:**
 - Auto-commit transactions: `fsync` after every statement
 - Explicit transactions: `fsync` only on `COMMIT`
 
-**Recovery (ARIES-style):**
+**Recovery (ARIES-inspired):**
 1. Load latest checkpoint LSN
 2. Scan WAL forward — collect all ops, identify committed vs aborted txns
 3. REDO committed ops not yet on disk (page LSN < op LSN)
-4. UNDO ops from aborted/uncommitted txns in reverse LSN order
+4. UNDO uncommitted inserts in reverse order (full UNDO for updates/deletes after crash is currently limited)
 
 **UNDO per operation:**
 
@@ -324,8 +322,7 @@ Manages schema and file ID metadata, persisted to the `metadata/` directory.
 ```
 DaemonDB/
 ├── main.go
-├── parser/           — SQL parser (AST)
-├── compiler/         — AST → bytecode
+├── query_parser/     — SQL lexer + parser + code generator
 ├── query_executor/   — VM, instruction execution
 ├── storage_engine/
 │   ├── access/
@@ -342,7 +339,7 @@ DaemonDB/
 └── database/         — data directory (created at runtime)
     └── {dbName}/
         ├── tables/   — {fileID}.heap, {tableName}_schema.json
-        ├── indexes/  — {tableName}_primary.idx
+        ├── indexes/  — {fileID}.idx
         ├── logs/     — wal_{segmentID}.log
         └── metadata/ — table_file_mapping.json, next_file_id.json
 ```
@@ -429,9 +426,9 @@ SQL: SELECT * FROM mytable
 | INSERT execution | ✅ Complete | Heap + index + WAL |
 | SELECT execution | ✅ Complete | PK lookup O(log n) + full scan |
 | UPDATE execution | ✅ Complete | Before-image fetch, heap update, index fixup |
-| WAL + crash recovery | ✅ Complete | REDO committed, UNDO aborted (before+after image) |
+| WAL + crash recovery | ✅ Partial | REDO committed; crash-time UNDO complete for inserts, limited for updates/deletes |
 | Transactions (BEGIN/COMMIT/ROLLBACK) | ✅ Complete | Logical undo via WAL |
-| Buffer pool (LRU, pin/unpin) | ✅ Complete | Shared across heap + index |
+| Buffer pool (GDSF, pin/unpin) | ✅ Complete | Shared across heap + index |
 | CatalogManager | ✅ Complete | Stable fileIDs persisted across restarts |
 
 ## Performance Characteristics
@@ -443,7 +440,7 @@ SQL: SELECT * FROM mytable
 - **Page Size**: 4KB (disk-aligned)
 - **Node Capacity**: 32 keys per node
 - **Concurrency**: Reader-writer locks on tree nodes
-- **Buffer Pool**: LRU with pin/unpin to protect pages during operations
+- **Buffer Pool**: GDSF eviction with pin/unpin to protect pages during operations
 
 ## Technical Specifications
 
@@ -458,7 +455,7 @@ SQL: SELECT * FROM mytable
 
 ## Future Work
 
-- [ ] Executor support for DELETE
+- [ ] Full crash-time UNDO for UPDATE/DELETE (log before-images in WAL)
 - [ ] Secondary indexes and non-PK predicates
 - [ ] Garbage collection / compaction for tombstoned rows
 
