@@ -11,3 +11,7 @@ func (vm *VM) ExecuteCreateDatabase(name string) error {
 func (vm *VM) ExecuteUseDatabase(name string) error {
 	return vm.storageEngine.UseDatabase(name)
 }
+
+func (vm *VM) ExecuteShowDatabase() ([]string, error) {
+	return vm.storageEngine.ShowDatabases()
+}

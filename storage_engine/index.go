@@ -11,8 +11,7 @@ import (
 This file contains function related to index in index files
 generating primary key from fileID and page number when it is not mentioned explicitly
 */
-
-func (se *StorageEngine) getIndex(tableName string) (*bplus.BPlusTree, error) {
+func (se *StorageEngine) GetIndex(tableName string) (*bplus.BPlusTree, error) {
 	indexFileID, err := se.CatalogManager.GetIndexFileID(tableName)
 	if err != nil {
 		return nil, err

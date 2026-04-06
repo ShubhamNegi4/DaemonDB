@@ -4,32 +4,25 @@ import (
 	diskmanager "DaemonDB/storage_engine/disk_manager"
 	"DaemonDB/storage_engine/page"
 	"DaemonDB/types"
-	"container/heap"
 	"encoding/binary"
 	"fmt"
 	"time"
 )
 
-/*
-This file is the main file of the bufferpool
-The buffer pool works on GDSF (Greedy Dual Size Frequency) caching mechanism
-and holds access to disk manager for flushing the pages in the cache onto the disk
-similarly if page not found in the cache, disk manager loads the page from the disk and adds in the cache for future access
+var SilenceLogs bool
 
-Pages are identified by globalPageID
-*/
-
-// NewBufferPool creates a new buffer pool with the given capacity
-func NewBufferPool(capacity int, diskManager *diskmanager.DiskManager) *BufferPool {
-	bp := &BufferPool{
+// NewBufferPool creates a buffer pool with the given capacity and eviction policy.
+// If policy is nil, LRU-K (K=2) is used as the default.
+func NewBufferPool(capacity int, diskManager *diskmanager.DiskManager, policy EvictionPolicy) *BufferPool {
+	if policy == nil {
+		policy = NewLRUKPolicy(2)
+	}
+	return &BufferPool{
 		pages:       make(map[int64]*page.Page, capacity),
 		capacity:    capacity,
 		diskManager: diskManager,
+		policy:      policy,
 	}
-	bp.policy.meta = make(map[int64]*gdsfMeta, capacity)
-	bp.policy.pq = make(gdsfPQ, 0, capacity)
-	heap.Init(&bp.policy.pq)
-	return bp
 }
 
 func (bp *BufferPool) SetWALManager(wal WALFlushedLSNGetter) {
@@ -44,26 +37,28 @@ func (bp *BufferPool) SetEvictDebug(enabled bool) {
 	bp.debugEvict = enabled
 }
 
-// FetchPage retrieves a page from the buffer pool, loading from disk if necessary
-// Returns the page with pin count incremented
+// FetchPage retrieves a page from the buffer pool, loading from disk if necessary.
 func (bp *BufferPool) FetchPage(pageID int64) (*page.Page, error) {
 	bp.mu.Lock()
 	defer bp.mu.Unlock()
 
-	// Check if page is in buffer pool
 	if pg, exists := bp.pages[pageID]; exists {
-		fmt.Printf("[BufferPool] HIT  pageID=%d pinCount=%d\n", pageID, pg.PinCount)
-		// Update GDSF access metadata (frequency).
-		bp.gdsfOnAccess(pageID, 0)
-		// Increment pin count
+		if !SilenceLogs {
+			fmt.Printf("[BufferPool] HIT  pageID=%d pinCount=%d policy=%s\n", pageID, pg.PinCount, bp.policy.Name())
+		}
+		bp.hits++
+		bp.policy.OnAccess(pageID)
 		pg.Lock()
 		pg.PinCount++
 		pg.Unlock()
 		return pg, nil
 	}
 
-	fmt.Printf("[BufferPool] MISS pageID=%d — loading from disk\n", pageID)
-	// Page not in buffer pool - load from disk
+	bp.misses++
+
+	if !SilenceLogs {
+		fmt.Printf("[BufferPool] MISS pageID=%d — loading from disk\n", pageID)
+	}
 	if bp.diskManager == nil {
 		return nil, fmt.Errorf("disk manager not set")
 	}
@@ -73,7 +68,7 @@ func (bp *BufferPool) FetchPage(pageID int64) (*page.Page, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read page %d from disk: %w", pageID, err)
 	}
-	missLatencyNS := float64(time.Since(start).Nanoseconds())
+	_ = time.Since(start)
 
 	if pg.PageType == types.PageTypeHeapData {
 		if len(pg.Data) >= 8 {
@@ -81,12 +76,10 @@ func (bp *BufferPool) FetchPage(pageID int64) (*page.Page, error) {
 		}
 	}
 
-	// Add to buffer pool (may trigger eviction)
-	if err := bp.addPage(pg, missLatencyNS); err != nil {
+	if err := bp.addPage(pg); err != nil {
 		return nil, fmt.Errorf("failed to add page to buffer pool: %w", err)
 	}
 
-	// Pin the page
 	pg.Lock()
 	pg.PinCount++
 	pg.Unlock()
@@ -94,10 +87,7 @@ func (bp *BufferPool) FetchPage(pageID int64) (*page.Page, error) {
 	return pg, nil
 }
 
-// NewPage creates a new page in the buffer pool for a specific file
-// NewPage asks the DiskManager for the next available page ID for the given
-// file, constructs a blank Page struct entirely in RAM, marks it dirty so
-// the BufferPool will eventually flush it, and pins it for the caller.
+// NewPage allocates a new page on disk, adds it to the pool, and pins it.
 func (bp *BufferPool) NewPage(fileID uint32, pageType types.PageType) (*page.Page, error) {
 	bp.mu.Lock()
 	defer bp.mu.Unlock()
@@ -106,23 +96,19 @@ func (bp *BufferPool) NewPage(fileID uint32, pageType types.PageType) (*page.Pag
 		return nil, fmt.Errorf("disk manager not set")
 	}
 
-	// Allocate a new page on disk
 	pageID, err := bp.diskManager.AllocatePage(fileID, pageType)
 	if err != nil {
 		return nil, fmt.Errorf("failed to allocate page: %w", err)
 	}
 
-	// Create page in memory
 	pg := diskmanager.NewPage(pageID, fileID, pageType)
-	pg.IsDirty = true // New pages are dirty by default
+	pg.IsDirty = true
 
 	pg.Lock()
 	pg.PinCount++
 	pg.Unlock()
 
-	// Add to buffer pool
-	if err := bp.addPage(pg, 0); err != nil {
-		// Pin the page
+	if err := bp.addPage(pg); err != nil {
 		pg.Lock()
 		pg.PinCount--
 		pg.Unlock()
@@ -132,66 +118,71 @@ func (bp *BufferPool) NewPage(fileID uint32, pageType types.PageType) (*page.Pag
 	return pg, nil
 }
 
-// UnpinPage decrements the pin count for a page
+// UnpinPage decrements the pin count for a page.
 func (bp *BufferPool) UnpinPage(pageID int64, isDirty bool) error {
 	bp.mu.Lock()
 	defer bp.mu.Unlock()
 
-	page, exists := bp.pages[pageID]
+	pg, exists := bp.pages[pageID]
 	if !exists {
 		return fmt.Errorf("page %d not in buffer pool", pageID)
 	}
 
-	page.Lock()
-	defer page.Unlock()
+	pg.Lock()
+	defer pg.Unlock()
 
-	if page.PinCount > 0 {
-		page.PinCount--
+	if pg.PinCount > 0 {
+		pg.PinCount--
 	}
-
 	if isDirty {
-		page.IsDirty = true
+		pg.IsDirty = true
 	}
-
 	return nil
 }
 
-// FlushPage writes a specific page to disk if dirty
+// FlushPage writes a specific dirty page to disk, respecting the WAL rule.
 func (bp *BufferPool) FlushPage(pageID int64) error {
 	bp.mu.Lock()
 	defer bp.mu.Unlock()
 
-	page, exists := bp.pages[pageID]
+	pg, exists := bp.pages[pageID]
 	if !exists {
 		return fmt.Errorf("page %d not in buffer pool", pageID)
 	}
 
-	page.Lock()
-	defer page.Unlock()
+	pg.Lock()
+	defer pg.Unlock()
 
-	if !page.IsDirty {
-		return nil // Nothing to flush
+	if !pg.IsDirty {
+		return nil
 	}
 
 	if bp.walManager != nil {
-		pageLSN := page.LSN // generic, works for both heap and index
+		pageLSN := pg.LSN
 		flushedLSN := bp.walManager.GetFlushedLSN()
 		if pageLSN > flushedLSN {
-			fmt.Printf("[BufferPool] FLUSH BLOCKED pageID=%d pageLSN=%d flushedLSN=%d\n", pageID, pageLSN, flushedLSN)
-			return fmt.Errorf("cannot flush page %d: pageLSN=%d not yet covered by WAL flushedLSN=%d", pageID, pageLSN, flushedLSN)
+			if !SilenceLogs {
+				fmt.Printf("[BufferPool] FLUSH BLOCKED pageID=%d pageLSN=%d flushedLSN=%d\n",
+					pageID, pageLSN, flushedLSN)
+			}
+			return fmt.Errorf(
+				"cannot flush page %d: pageLSN=%d not yet covered by WAL flushedLSN=%d",
+				pageID, pageLSN, flushedLSN)
 		}
-		fmt.Printf("[BufferPool] FLUSH pageID=%d pageLSN=%d flushedLSN=%d\n", pageID, pageLSN, flushedLSN)
+		if !SilenceLogs {
+			fmt.Printf("[BufferPool] FLUSH pageID=%d pageLSN=%d flushedLSN=%d\n",
+				pageID, pageLSN, flushedLSN)
+		}
 	}
 
-	if err := bp.diskManager.WritePage(page); err != nil {
+	if err := bp.diskManager.WritePage(pg); err != nil {
 		return fmt.Errorf("failed to flush page %d: %w", pageID, err)
 	}
-
-	page.IsDirty = false
+	pg.IsDirty = false
 	return nil
 }
 
-// FlushAllPages writes all dirty pages to disk
+// FlushAllPages writes all dirty pages to disk, skipping WAL-blocked ones.
 func (bp *BufferPool) FlushAllPages() error {
 	bp.mu.Lock()
 	defer bp.mu.Unlock()
@@ -200,200 +191,128 @@ func (bp *BufferPool) FlushAllPages() error {
 		return fmt.Errorf("disk manager not set")
 	}
 
-	fmt.Printf("[BufferPool] FlushAllPages — pool size=%d\n", len(bp.pages))
-
-	for pageID, page := range bp.pages {
-		page.Lock()
-		if page.IsDirty {
-			if bp.walManager != nil {
-				if page.LSN > bp.walManager.GetFlushedLSN() {
-					page.Unlock()
-					continue // skip — not yet covered by WAL
-				}
-			}
-			if err := bp.diskManager.WritePage(page); err != nil {
-				page.Unlock()
-				return fmt.Errorf("failed to flush page %d: %w", pageID, err)
-			}
-			fmt.Printf("[BufferPool]   flushing pageID=%d\n", pageID)
-			page.IsDirty = false
-		}
-		page.Unlock()
+	if !SilenceLogs {
+		fmt.Printf("[BufferPool] FlushAllPages — pool size=%d policy=%s\n", len(bp.pages), bp.policy.Name())
 	}
-
-	return nil
-}
-
-// addPage adds a page to the buffer pool, evicting if necessary
-// Assumes lock is already held
-func (bp *BufferPool) addPage(page *page.Page, missLatencyNS float64) error {
-	// If page already in pool, just update GDSF.
-	if _, exists := bp.pages[page.ID]; exists {
-		bp.gdsfOnAccess(page.ID, missLatencyNS)
-		return nil
-	}
-
-	// If at capacity, evict GDSF victim (lowest key).
-	if len(bp.pages) >= bp.capacity {
-		if err := bp.evictGDSF(); err != nil {
-			return fmt.Errorf("failed to evict page: %w", err)
-		}
-	}
-
-	// Add page to pool
-	bp.pages[page.ID] = page
-	bp.gdsfInitOrUpdate(page.ID, missLatencyNS)
-
-	return nil
-}
-
-// evictGDSF evicts the lowest-key unpinned page under GDSF.
-// Assumes lock is already held
-func (bp *BufferPool) evictGDSF() error {
-	// Temporarily hold pages we can't evict right now (pinned or WAL-blocked).
-	skipped := make([]*gdsfItem, 0, 8)
-	defer func() {
-		// Restore skipped items back into heap.
-		for _, it := range skipped {
-			heap.Push(&bp.policy.pq, it)
-		}
-	}()
-
-	for bp.policy.pq.Len() > 0 {
-		item := heap.Pop(&bp.policy.pq).(*gdsfItem)
-		meta := bp.policy.meta[item.pageID]
-		if meta == nil || meta.item != item {
-			continue
-		}
-
-		pg, exists := bp.pages[item.pageID]
-		if !exists {
-			delete(bp.policy.meta, item.pageID)
-			continue
-		}
-
+	for pageID, pg := range bp.pages {
 		pg.Lock()
-		pinCount := pg.PinCount
-		isDirty := pg.IsDirty
-		if pinCount > 0 {
-			pg.Unlock()
-			skipped = append(skipped, item)
-			continue
-		}
-
-		// Flush if dirty.
-		if isDirty && bp.diskManager != nil {
+		if pg.IsDirty {
 			if bp.walManager != nil && pg.LSN > bp.walManager.GetFlushedLSN() {
-				// Can't evict this page yet — WAL not durable.
 				pg.Unlock()
-				skipped = append(skipped, item)
 				continue
 			}
 			if err := bp.diskManager.WritePage(pg); err != nil {
 				pg.Unlock()
-				return fmt.Errorf("failed to write page %d during eviction: %w", item.pageID, err)
+				return fmt.Errorf("failed to flush page %d: %w", pageID, err)
 			}
+			fmt.Printf("[BufferPool]   flushing pageID=%d\n", pageID)
 			pg.IsDirty = false
 		}
-
-		if bp.debugEvict {
-			fmt.Printf("[BufferPool] EVICT pageID=%d dirty=%v key=%.12f\n", item.pageID, isDirty, item.key)
-		}
 		pg.Unlock()
-
-		// Update inflation value H to victim's key.
-		bp.policy.H = item.key
-
-		// Remove from pool and metadata.
-		delete(bp.pages, item.pageID)
-		delete(bp.policy.meta, item.pageID)
-		return nil
 	}
-
-	return fmt.Errorf("all pages are pinned, cannot evict")
+	return nil
 }
 
-// gdsfScore computes the GDSF score using the user-provided formula:
-// Score = (Frequency × Latency) / Response_Size
-// - Frequency: float64 access count
-// - Latency: float64 nanoseconds (observed on miss); 0 if never missed
-// - Response_Size: bytes (page size)
-func (bp *BufferPool) gdsfScore(m *gdsfMeta) float64 {
-	if m == nil {
-		return 0
-	}
-	if m.RespSizeB <= 0 {
-		return 0
-	}
-	return (m.Frequency * m.LatencyNS) / m.RespSizeB
-}
-
-func (bp *BufferPool) gdsfInitOrUpdate(pageID int64, missLatencyNS float64) {
-	meta := bp.policy.meta[pageID]
-	if meta == nil {
-		meta = &gdsfMeta{
-			Frequency: 0,
-			LatencyNS: 0,
-			RespSizeB: float64(page.PageSize),
-		}
-		bp.policy.meta[pageID] = meta
-	}
-	// If this load came from disk, record the observed miss latency.
-	if missLatencyNS > 0 {
-		meta.LatencyNS = missLatencyNS
-	}
-	// New page creation has missLatencyNS=0; leave LatencyNS unchanged.
-	meta.Frequency += 1
-
-	key := bp.policy.H + bp.gdsfScore(meta)
-	if meta.item == nil {
-		it := &gdsfItem{pageID: pageID, key: key}
-		meta.item = it
-		heap.Push(&bp.policy.pq, it)
-	} else {
-		meta.item.key = key
-		heap.Fix(&bp.policy.pq, meta.item.index)
-	}
-}
-
-func (bp *BufferPool) gdsfOnAccess(pageID int64, missLatencyNS float64) {
-	bp.gdsfInitOrUpdate(pageID, missLatencyNS)
-}
-
-func (bp *BufferPool) gdsfRequeue(pageID int64) {
-	meta := bp.policy.meta[pageID]
-	if meta == nil {
-		return
-	}
-	// Item already exists; just fix heap ordering.
-	if meta.item != nil {
-		heap.Fix(&bp.policy.pq, meta.item.index)
-	}
-}
-
-// DeletePage removes a page from the buffer pool (used after deletion)
+// DeletePage removes a page from the buffer pool.
 func (bp *BufferPool) DeletePage(pageID int64) error {
 	bp.mu.Lock()
 	defer bp.mu.Unlock()
 
-	page, exists := bp.pages[pageID]
+	pg, exists := bp.pages[pageID]
 	if !exists {
-		return nil // Already not in pool
+		return nil
 	}
 
-	page.Lock()
-	if page.PinCount > 0 {
-		page.Unlock()
+	pg.Lock()
+	if pg.PinCount > 0 {
+		pg.Unlock()
 		return fmt.Errorf("cannot delete pinned page %d", pageID)
 	}
-	page.Unlock()
+	pg.Unlock()
 
-	// Remove from pool and access order
+	bp.policy.OnEvict(pageID) // ← notify policy to clean up its metadata
 	delete(bp.pages, pageID)
-	if meta := bp.policy.meta[pageID]; meta != nil && meta.item != nil {
-		heap.Remove(&bp.policy.pq, meta.item.index)
-	}
-	delete(bp.policy.meta, pageID)
-
 	return nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal helpers — all assume bp.mu is held by the caller.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// addPage inserts a page into the pool, evicting a victim first if full.
+func (bp *BufferPool) addPage(pg *page.Page) error {
+	if _, exists := bp.pages[pg.ID]; exists {
+		bp.policy.OnAccess(pg.ID)
+		return nil
+	}
+
+	if len(bp.pages) >= bp.capacity {
+		if err := bp.evict(); err != nil {
+			return fmt.Errorf("eviction failed: %w", err)
+		}
+	}
+
+	bp.pages[pg.ID] = pg
+	bp.policy.OnAccess(pg.ID) // record first access
+	return nil
+}
+
+// evict picks a victim via the active policy, flushes it if dirty, and
+// removes it from the pool.
+func (bp *BufferPool) evict() error {
+	// Build a WAL-aware candidate set: wrap pages map but let the policy
+	// pick — it skips pinned pages. We handle WAL-blocked pages here by
+	// retrying with a reduced candidate set if needed.
+	victim := bp.policy.ChooseVictim(bp.pages)
+	if victim == -1 {
+		return fmt.Errorf("all pages are pinned, cannot evict")
+	}
+
+	pg := bp.pages[victim]
+	pg.Lock()
+
+	// WAL safety: if the chosen victim is dirty and its LSN isn't durable
+	// yet, fall back — iterate remaining pages for an unblocked candidate.
+	if pg.IsDirty && bp.walManager != nil && pg.LSN > bp.walManager.GetFlushedLSN() {
+		pg.Unlock()
+		// Linear scan for a WAL-safe unpinned page.
+		victim = bp.walSafeVictim()
+		if victim == -1 {
+			return fmt.Errorf("all pages are pinned or WAL-blocked, cannot evict")
+		}
+		pg = bp.pages[victim]
+		pg.Lock()
+	}
+
+	if pg.IsDirty && bp.diskManager != nil {
+		if err := bp.diskManager.WritePage(pg); err != nil {
+			pg.Unlock()
+			return fmt.Errorf("failed to write page %d during eviction: %w", victim, err)
+		}
+		pg.IsDirty = false
+	}
+
+	if bp.debugEvict && !SilenceLogs {
+		fmt.Printf("[BufferPool] EVICT pageID=%d policy=%s\n", victim, bp.policy.Name())
+	}
+	pg.Unlock()
+
+	bp.policy.OnEvict(victim)
+	delete(bp.pages, victim)
+	return nil
+}
+
+// walSafeVictim finds any unpinned page whose dirty LSN is already covered
+// by the WAL, or any clean unpinned page.  O(n) fallback, called rarely.
+func (bp *BufferPool) walSafeVictim() int64 {
+	for pageID, pg := range bp.pages {
+		pg.Lock()
+		pinned := pg.PinCount > 0
+		walBlocked := pg.IsDirty && bp.walManager != nil && pg.LSN > bp.walManager.GetFlushedLSN()
+		pg.Unlock()
+		if !pinned && !walBlocked {
+			return pageID
+		}
+	}
+	return -1
 }

@@ -155,7 +155,7 @@ func (se *StorageEngine) RecoverFromWAL() error {
 				values, err := se.DeserializeRow(op.RowData, schema.Columns)
 				if err == nil {
 					pkBytes, _, _ := se.ExtractPrimaryKey(schema, values, &rp)
-					btree, err := se.getIndex(op.Table)
+					btree, err := se.GetIndex(op.Table)
 					if err == nil {
 						btree.Delete(pkBytes)
 					}
@@ -286,7 +286,7 @@ func (se *StorageEngine) replayTruncate(op *types.Operation) error {
 	}
 
 	// Reset index
-	index, err := se.getIndex(op.Table)
+	index, err := se.GetIndex(op.Table)
 	if err == nil {
 		index.Reset()
 	}

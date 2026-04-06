@@ -86,7 +86,7 @@ func (se *StorageEngine) selectWithPKLookup(tableName string, schema types.Table
 	}
 
 	// Look up in the index.
-	btree, err := se.getIndex(tableName)
+	btree, err := se.GetIndex(tableName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to get index: %w", err)
 	}

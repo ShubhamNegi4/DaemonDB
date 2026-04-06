@@ -130,7 +130,7 @@ func (se *StorageEngine) AbortTransaction(t *txn.Transaction) error {
 				u.Table, rp.PageNumber, rp.SlotIndex, err)
 		}
 
-		idx, err := se.getIndex(u.Table)
+		idx, err := se.GetIndex(u.Table)
 		if err != nil {
 			return fmt.Errorf("rollback: index open failed (table=%s): %w", u.Table, err)
 		}
@@ -151,7 +151,7 @@ func (se *StorageEngine) AbortTransaction(t *txn.Transaction) error {
 				ins.Table, rp.PageNumber, rp.SlotIndex, err)
 		}
 
-		idx, err := se.getIndex(ins.Table)
+		idx, err := se.GetIndex(ins.Table)
 		if err != nil {
 			return fmt.Errorf("rollback: index open failed (table=%s): %w", ins.Table, err)
 		}

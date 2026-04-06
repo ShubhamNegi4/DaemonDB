@@ -55,6 +55,18 @@ func (vm *VM) Execute(instructions []Instruction) error {
 		case OP_USE_DB:
 			return vm.ExecuteUseDatabase(instr.Value)
 
+		case OP_SHOW_DB:
+			result, err := vm.ExecuteShowDatabase()
+			if err != nil {
+				fmt.Println("Error:", err)
+				return err
+			}
+
+			for _, db := range result {
+				fmt.Println(db)
+			}
+			return err
+
 		case OP_CREATE_TABLE:
 			return vm.ExecuteCreateTable(instr.Value)
 

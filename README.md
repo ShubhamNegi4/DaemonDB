@@ -23,13 +23,13 @@ VM (VDBE) - Orchestrates operations, does NOT write to disk
             └─→ TxnManager       - Transaction lifecycle + rollback records
                     ↓
             DiskManager  - OS file handles, global↔local page ID mapping
-            BufferPool   - Page cache, pinning, GDSF eviction, dirty flushing
+            BufferPool   - Page cache, pinning, LRU-k and tinyLFU eviction, dirty flushing
 ```
 ### Layered View
 
 ```
 ┌─────────────────────────────────────────┐
-│         SQL Query Layer                  │
+│         SQL Query Layer                 │
 │  (Parser → Code Generator → VM)         │
 └──────────────┬──────────────────────────┘
                │
@@ -48,7 +48,7 @@ VM (VDBE) - Orchestrates operations, does NOT write to disk
            ▼          ▼
 ┌─────────────────────────────────────────┐
 │   BufferPool + DiskManager              │
-│   (4KB Pages, GDSF Cache, File I/O)     │
+│   (4KB Pages, Cache, File I/O)          │
 └─────────────────────────────────────────┘
 ```
 
@@ -178,7 +178,7 @@ Global IDs are stable across restarts regardless of file load order.
 
 ### BufferPool (`storage_engine/bufferpool/`)
 
-Fixed-capacity page cache with GDSF-based eviction.
+Fixed-capacity page cache with pluggable eviction policy.
 
 - Pages identified by `globalPageID`
 - Cache miss → `DiskManager.ReadPage` loads from disk
@@ -186,9 +186,21 @@ Fixed-capacity page cache with GDSF-based eviction.
 - `NewPage(fileID, pageType)` allocates via `DiskManager.AllocatePage`
 - `FetchPage(globalPageID)` increments pin count — caller must `UnpinPage` when done
 
-**GDSF scoring:** \(\text{Score} = (\text{Frequency} \times \text{Latency}) / \text{ResponseSize}\). DaemonDB measures miss latency at page-load time and uses page size as the response size.
+**Eviction Policies:** Two policies are available, selected via `DAEMONDB_BUFFERPOOL_POLICY`:
 
-**Tuning:** `DAEMONDB_BUFFERPOOL_CAPACITY` controls cache size (pages). `DAEMONDB_BUFFERPOOL_EVICT_DEBUG=1` prints eviction decisions.
+| Policy | Value | Description |
+|---|---|---|
+| LRU-K (default) | `lruk` | K=2, matches PostgreSQL. Pages must be accessed twice before competing as hot. Single-access scan pages are always evicted first — scan resistant. |
+| W-TinyLFU | `tinylfu` | Windowed TinyLFU. Uses a Count-Min Sketch for frequency estimation. Persistent frequency memory survives eviction — best post-scan recovery. |
+
+**Benchmark results** (64-page pool, Zipfian 80/20 access, AMD Ryzen 5 5625U):
+- Steady-state OLTP: LRU-K leads W-TinyLFU by up to 11 percentage points in hit rate
+- Post-scan recovery: W-TinyLFU leads LRU-K by 25 percentage points (64.4% vs 39.1%)
+- Scan pollution resistance: both policies equivalent (~97% hit rate)
+
+**Tuning:**
+- `DAEMONDB_BUFFERPOOL_CAPACITY` — pool size in pages (default: 64)
+- `DAEMONDB_BUFFERPOOL_POLICY` — eviction policy: `lruk` (default) or `tinylfu`
 
 **Page type byte:** `WritePage` stamps `pg.Data[8] = byte(pg.PageType)` on every write. All page formats must treat byte 8 as reserved for this stamp.
 
@@ -368,7 +380,18 @@ ROLLBACK
 SELECT * FROM students   -- Carol not present (rolled back)
 ```
 
+## Test
+```bash
+cd test  
 
+DAEMONDB_BUFFERPOOL_POLICY=lruk    DAEMONDB_BUFFERPOOL_CAPACITY=64 go test -bench=. -benchtime=3s -v . 2>&1 | grep -E "Be
+nchmark.*ns/op" > lruk.txt
+
+DAEMONDB_BUFFERPOOL_POLICY=tinylfu DAEMONDB_BUFFERPOOL_CAPACITY=64 go test -bench=. -benchtime=3s -v . 2>&1 | grep -E "Be
+nchmark.*ns/op" > tinylfu.txt
+
+cat lruk.txt tinylfu.txt
+```
 
 ## Data Flow Example
 
@@ -428,7 +451,7 @@ SQL: SELECT * FROM mytable
 | UPDATE execution | ✅ Complete | Before-image fetch, heap update, index fixup |
 | WAL + crash recovery | ✅ Partial | REDO committed; crash-time UNDO complete for inserts, limited for updates/deletes |
 | Transactions (BEGIN/COMMIT/ROLLBACK) | ✅ Complete | Logical undo via WAL |
-| Buffer pool (GDSF, pin/unpin) | ✅ Complete | Shared across heap + index |
+| Buffer pool (lfu-k or tinyw, pin/unpin) | ✅ Complete | Shared across heap + index |
 | CatalogManager | ✅ Complete | Stable fileIDs persisted across restarts |
 
 ## Performance Characteristics
@@ -440,7 +463,7 @@ SQL: SELECT * FROM mytable
 - **Page Size**: 4KB (disk-aligned)
 - **Node Capacity**: 32 keys per node
 - **Concurrency**: Reader-writer locks on tree nodes
-- **Buffer Pool**: GDSF eviction with pin/unpin to protect pages during operations
+- **Buffer Pool**: lfu-k or tinyw eviction with pin/unpin to protect pages during operations
 
 ## Technical Specifications
 

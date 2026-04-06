@@ -77,7 +77,7 @@ func (se *StorageEngine) UpdateRow(txn *txn.Transaction, tableName string, ptr t
 		return fmt.Errorf("failed to extract new PK: %w", err)
 	}
 
-	btree, err := se.getIndex(tableName)
+	btree, err := se.GetIndex(tableName)
 	if err != nil {
 		return fmt.Errorf("failed to get index: %w", err)
 	}

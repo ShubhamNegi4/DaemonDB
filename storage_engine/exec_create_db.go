@@ -58,7 +58,7 @@ func (se *StorageEngine) CreateDatabase(dbName string) error {
 	return nil
 }
 
-func (se *StorageEngine) ExecuteShowDatabases() ([]string, error) {
+func (se *StorageEngine) ShowDatabases() ([]string, error) {
 	entries, err := os.ReadDir(se.DbRoot)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read DB root directory: %w", err)
@@ -99,7 +99,11 @@ func (se *StorageEngine) UseDatabase(name string) error {
 			capacity = n
 		}
 	}
-	bufferPool := bufferpool.NewBufferPool(capacity, diskManager)
+
+	policy := selectEvictionPolicy(os.Getenv("DAEMONDB_BUFFERPOOL_POLICY"), capacity)
+	fmt.Printf("[BENCHMARK] BufferPool policy=%s capacity=%d\n", policy.Name(), capacity)
+
+	bufferPool := bufferpool.NewBufferPool(capacity, diskManager, policy)
 	if os.Getenv("DAEMONDB_BUFFERPOOL_EVICT_DEBUG") == "1" {
 		bufferPool.SetEvictDebug(true)
 	}
@@ -210,4 +214,15 @@ func (se *StorageEngine) closeCurrentDatabase() {
 	se.HeapManager = nil
 	se.WalManager = nil
 	se.currDb = ""
+}
+
+// selectEvictionPolicy maps the env-var string to a concrete policy.
+// Lives in storage_engine.go (or a small policy_select.go file).
+func selectEvictionPolicy(name string, capacity int) bufferpool.EvictionPolicy {
+	switch name {
+	case "tinylfu":
+		return bufferpool.NewTinyLFUPolicy(capacity)
+	default: // "lruk" or anything else
+		return bufferpool.NewLRUKPolicy(2) // K=2, same as PostgreSQL
+	}
 }

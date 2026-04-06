@@ -68,7 +68,7 @@ func (se *StorageEngine) TruncateTable(tableName string) error {
 	// ---------------------------
 	// Get index
 	// ---------------------------
-	index, err := se.getIndex(tableName)
+	index, err := se.GetIndex(tableName)
 
 	// ---------------------------
 	// Delete rows

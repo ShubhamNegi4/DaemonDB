@@ -84,7 +84,7 @@ func (se *StorageEngine) InsertRow(txn *txn.Transaction, tableName string, value
 		}
 
 		// Check that the referenced row exists in the parent table's index.
-		refTree, err := se.getIndex(fk.RefTable)
+		refTree, err := se.GetIndex(fk.RefTable)
 		if err != nil {
 			return fmt.Errorf("referenced table '%s' index not found: %w", fk.RefTable, err)
 		}
@@ -146,7 +146,7 @@ func (se *StorageEngine) InsertRow(txn *txn.Transaction, tableName string, value
 	}
 
 	rowPtrBytes := se.SerializeRowPointer(*rowPtr)
-	btree, err := se.getIndex(tableName)
+	btree, err := se.GetIndex(tableName)
 	if err != nil {
 		_ = se.HeapManager.DeleteRow(rowPtr, lsn)
 		return fmt.Errorf("failed to get index for '%s': %w", tableName, err)

@@ -55,7 +55,7 @@ func (se *StorageEngine) DeleteRows(tableName string, whereCol string, whereVal 
 	}
 
 	// Get index
-	index, _ := se.getIndex(tableName)
+	index, _ := se.GetIndex(tableName)
 
 	// Determine column index for WHERE
 	colIndex := -1
